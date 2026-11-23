@@ -11,6 +11,7 @@ public final class BatteryOptimizationService: @unchecked Sendable {
     public var isScreenOff: Bool = false
     public var isPowerSavingActive: Bool = false
     public var batteryLevelPercent: Int = 100
+    public var isCharging: Bool = false
     
     private var stationaryCounter: Int = 0
     private let stationaryThresholdSeconds = 20
@@ -18,7 +19,10 @@ public final class BatteryOptimizationService: @unchecked Sendable {
     private init() {
         #if canImport(UIKit)
         UIDevice.current.isBatteryMonitoringEnabled = true
-        batteryLevelPercent = Int(max(0, UIDevice.current.batteryLevel * 100))
+        let level = UIDevice.current.batteryLevel
+        batteryLevelPercent = level >= 0 ? Int(level * 100) : 100
+        let state = UIDevice.current.batteryState
+        isCharging = (state == .charging || state == .full)
         #endif
         
         setupLifecycleObservers()
@@ -48,7 +52,17 @@ public final class BatteryOptimizationService: @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.batteryLevelPercent = Int(max(0, UIDevice.current.batteryLevel * 100))
+            let level = UIDevice.current.batteryLevel
+            self?.batteryLevelPercent = level >= 0 ? Int(level * 100) : 100
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: UIDevice.batteryStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            let state = UIDevice.current.batteryState
+            self?.isCharging = (state == .charging || state == .full)
         }
         #endif
     }

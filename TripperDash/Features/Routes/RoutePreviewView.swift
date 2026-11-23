@@ -24,16 +24,20 @@ public struct RoutePreviewView: View {
                 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 20) {
-                        // Input Card
+                        // Destination Input Card
                         GlassCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("DESTINATION OR MAP LINK")
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(AppTheme.textTertiary)
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Destination")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(AppTheme.textSecondary)
                                 
-                                HStack(spacing: 8) {
-                                    TextField("Paste Google Maps link or coordinates...", text: $inputDestination)
-                                        .font(.system(size: 14, design: .rounded))
+                                HStack(spacing: 10) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(AppTheme.textTertiary)
+                                    
+                                    TextField("Google Maps link or lat, lng", text: $inputDestination)
+                                        .font(.system(size: 15))
                                         .foregroundColor(.white)
                                     
                                     Button(action: {
@@ -48,99 +52,110 @@ public struct RoutePreviewView: View {
                                         #endif
                                     }) {
                                         Text("Paste")
-                                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                            .font(.system(size: 12, weight: .semibold))
                                             .foregroundColor(AppTheme.accent)
                                             .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
+                                            .padding(.vertical, 5)
                                             .background(AppTheme.surfaceElevated)
                                             .clipShape(Capsule())
                                     }
+                                    .buttonStyle(.plain)
                                 }
                                 .padding(12)
                                 .background(AppTheme.surfaceElevated)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 
                                 Button(action: calculateRoute) {
-                                    HStack(spacing: 6) {
+                                    HStack(spacing: 8) {
                                         if isCalculating {
-                                            ProgressView()
-                                                .tint(.black)
+                                            ProgressView().tint(.black)
                                         } else {
                                             Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                                                .font(.system(size: 14))
+                                                .font(.system(size: 14, weight: .semibold))
                                         }
-                                        Text(isCalculating ? "Calculating Route..." : "Preview Route")
-                                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                        Text(isCalculating ? "Calculating…" : "Preview Route")
+                                            .font(.system(size: 15, weight: .semibold))
                                     }
                                     .foregroundColor(.black)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(AppTheme.accent)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .padding(.vertical, 13)
+                                    .background(inputDestination.isEmpty ? AppTheme.accent.opacity(0.45) : AppTheme.accent)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
+                                .buttonStyle(.plain)
                                 .disabled(inputDestination.isEmpty || isCalculating)
                             }
                         }
                         .padding(.horizontal, 20)
-                        .padding(.top, 12)
+                        .padding(.top, 8)
                         
                         if let error = errorMessage {
                             Text(error)
-                                .font(.system(size: 13, design: .rounded))
+                                .font(.system(size: 13))
                                 .foregroundColor(AppTheme.coral)
-                                .padding(.horizontal, 20)
+                                .padding(.horizontal, 24)
                         }
                         
-                        // Interactive Map Preview
+                        // Map Preview
                         if !decodedRouteCoords.isEmpty {
                             Map(position: $mapPosition) {
                                 MapPolyline(coordinates: decodedRouteCoords)
                                     .stroke(AppTheme.accent, lineWidth: 5)
                             }
-                            .frame(height: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .frame(height: 230)
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(AppTheme.border, lineWidth: 1)
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(AppTheme.borderSpecular, lineWidth: 0.6)
                             )
                             .padding(.horizontal, 20)
                         }
                         
-                        // Route Stats & Steps
+                        // Route Stats & TFT Sync
                         if let route = routeInfo {
                             GlassCard {
-                                HStack(spacing: 0) {
-                                    StatTile(
-                                        title: "Distance",
-                                        value: String(format: "%.1f", route.totalDistanceMeters / 1000.0),
-                                        unit: "km"
-                                    )
-                                    
-                                    Divider()
-                                        .background(AppTheme.border)
-                                        .frame(height: 36)
-                                        .padding(.horizontal, 12)
-                                    
-                                    StatTile(
-                                        title: "Duration",
-                                        value: String(format: "%d", route.totalDurationSeconds / 60),
-                                        unit: "min"
-                                    )
+                                VStack(spacing: 14) {
+                                    HStack(spacing: 0) {
+                                        StatTile(
+                                            title: "Distance",
+                                            value: String(format: "%.1f", route.totalDistanceMeters / 1000.0),
+                                            unit: "km"
+                                        )
+                                        Rectangle()
+                                            .fill(AppTheme.border)
+                                            .frame(width: 0.6, height: 34)
+                                            .padding(.horizontal, 12)
+                                        StatTile(
+                                            title: "Duration",
+                                            value: "\(route.totalDurationSeconds / 60)",
+                                            unit: "min"
+                                        )
+                                    }
                                     
                                     if dashClient.connectionState == .connected {
-                                        Divider()
-                                            .background(AppTheme.border)
-                                            .frame(height: 36)
-                                            .padding(.horizontal, 12)
+                                        Divider().background(AppTheme.border)
                                         
-                                        Button(action: streamFirstStepToDash) {
-                                            VStack(spacing: 2) {
-                                                Image(systemName: "dot.radiowaves.up.forward")
-                                                    .font(.system(size: 18))
-                                                Text("Dash Sync")
-                                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        HStack(spacing: 10) {
+                                            MinimalButton(
+                                                title: dashClient.isNavigationActive ? "Update TFT Turn" : "Send to Bike TFT",
+                                                icon: "dot.radiowaves.up.forward",
+                                                isProminent: true,
+                                                tint: AppTheme.accent,
+                                                action: streamFirstStepToDash
+                                            )
+                                            
+                                            if dashClient.isNavigationActive {
+                                                Button(action: { dashClient.stopNavigation() }) {
+                                                    Text("End")
+                                                        .font(.system(size: 15, weight: .semibold))
+                                                        .foregroundColor(AppTheme.coral)
+                                                        .padding(.horizontal, 18)
+                                                        .padding(.vertical, 16)
+                                                        .background(AppTheme.surfaceElevated)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                                }
+                                                .buttonStyle(.plain)
                                             }
-                                            .foregroundColor(AppTheme.accent)
                                         }
                                     }
                                 }
@@ -149,28 +164,27 @@ public struct RoutePreviewView: View {
                             
                             // Turn-by-Turn Steps
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("TURN MANEUVERS (\(route.steps.count))")
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundColor(AppTheme.textTertiary)
-                                    .padding(.horizontal, 20)
+                                SectionLabel("Turn-by-Turn (\(route.steps.count))")
+                                    .padding(.horizontal, 24)
                                 
                                 ForEach(route.steps) { step in
-                                    GlassCard(padding: 12) {
+                                    GlassCard(cornerRadius: 16, padding: 14) {
                                         HStack(spacing: 12) {
                                             Image(systemName: step.maneuver.iconName)
-                                                .font(.system(size: 20))
+                                                .font(.system(size: 18, weight: .semibold))
                                                 .foregroundColor(AppTheme.accent)
-                                                .frame(width: 36, height: 36)
+                                                .frame(width: 38, height: 38)
                                                 .background(AppTheme.surfaceElevated)
                                                 .clipShape(Circle())
                                             
-                                            VStack(alignment: .leading, spacing: 3) {
+                                            VStack(alignment: .leading, spacing: 2) {
                                                 Text(step.instruction)
-                                                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                                                    .font(.system(size: 14, weight: .medium))
                                                     .foregroundColor(AppTheme.textPrimary)
                                                 
-                                                Text(String(format: "%.0f meters", step.distanceMeters))
-                                                    .font(.system(size: 12, design: .monospaced))
+                                                Text(String(format: "%.0f m", step.distanceMeters))
+                                                    .font(.system(size: 12, design: .rounded))
+                                                    .monospacedDigit()
                                                     .foregroundColor(AppTheme.textSecondary)
                                             }
                                             
@@ -182,22 +196,19 @@ public struct RoutePreviewView: View {
                             }
                         }
                         
-                        Spacer(minLength: 30)
+                        Spacer(minLength: 32)
                     }
                 }
             }
-            .navigationTitle("Route Preview")
+            .navigationTitle("Navigate")
         }
     }
     
     private func calculateRoute() {
-        guard let origin = tracker.currentLocation ?? CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946) as CLLocationCoordinate2D? else {
-            errorMessage = "Location required to calculate route"
-            return
-        }
+        let origin = tracker.currentLocation ?? CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946)
         
         guard let dest = RouteService.shared.parseDestination(from: inputDestination) else {
-            errorMessage = "Could not parse coordinates. Enter lat,lng or Google Maps link"
+            errorMessage = "Enter coordinates (lat, lng) or a Google Maps link."
             return
         }
         
@@ -220,7 +231,7 @@ public struct RoutePreviewView: View {
                 }
             } catch {
                 await MainActor.run {
-                    self.errorMessage = "Failed to route: \(error.localizedDescription)"
+                    self.errorMessage = "Could not calculate route: \(error.localizedDescription)"
                     self.isCalculating = false
                 }
             }
@@ -230,7 +241,7 @@ public struct RoutePreviewView: View {
     private func streamFirstStepToDash() {
         guard let firstStep = routeInfo?.steps.first else { return }
         dashClient.sendManeuver(
-            iconCode: 0x01,
+            iconCode: 0x04,
             distanceMeters: UInt32(firstStep.distanceMeters),
             streetName: firstStep.streetName.isEmpty ? firstStep.instruction : firstStep.streetName
         )

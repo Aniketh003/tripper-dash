@@ -149,6 +149,7 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         
         currentLocation = location.coordinate
         currentAltitude = location.altitude
+        WeatherService.shared.refresh(for: location.coordinate)
         
         // Convert speed (m/s -> km/h)
         let speedMps = max(0.0, location.speed)

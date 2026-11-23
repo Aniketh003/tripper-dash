@@ -35,6 +35,8 @@
 		A10026 /* BatteryOptimizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* BatteryOptimizationService.swift */; };
 		A10027 /* DashAuthCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* DashAuthCrypto.swift */; };
 		A10028 /* DashK1GProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10028 /* DashK1GProtocol.swift */; };
+		A10029 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029 /* WeatherService.swift */; };
+		A10030 /* TFTProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* TFTProjectionService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -67,6 +69,8 @@
 		B10026 /* BatteryOptimizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BatteryOptimizationService.swift; sourceTree = "<group>"; };
 		B10027 /* DashAuthCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/DashAuthCrypto.swift; sourceTree = "<group>"; };
 		B10028 /* DashK1GProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/DashK1GProtocol.swift; sourceTree = "<group>"; };
+		B10029 /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/WeatherService.swift; sourceTree = "<group>"; };
+		B10030 /* TFTProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/TFTProjectionService.swift; sourceTree = "<group>"; };
 		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -122,6 +126,7 @@
 				B10024 /* MediaPlaybackService.swift */,
 				B10025 /* CallHandlingService.swift */,
 				B10026 /* BatteryOptimizationService.swift */,
+				B10029 /* WeatherService.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -145,6 +150,7 @@
 				B10013 /* TripperPodClient.swift */,
 				B10027 /* DashAuthCrypto.swift */,
 				B10028 /* DashK1GProtocol.swift */,
+				B10030 /* TFTProjectionService.swift */,
 			);
 			path = DashProtocol;
 			sourceTree = "<group>";
@@ -269,6 +275,8 @@
 				A10026 /* BatteryOptimizationService.swift in Sources */,
 				A10027 /* DashAuthCrypto.swift in Sources */,
 				A10028 /* DashK1GProtocol.swift in Sources */,
+				A10029 /* WeatherService.swift in Sources */,
+				A10030 /* TFTProjectionService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

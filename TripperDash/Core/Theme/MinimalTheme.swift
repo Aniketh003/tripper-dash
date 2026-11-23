@@ -1,34 +1,40 @@
 import SwiftUI
 
-// MARK: - Minimal Theme Palette
+// MARK: - Apple-Grade Minimal OLED Design System
 public enum AppTheme {
-    // Pure OLED & Surface tones
-    public static let background = Color(red: 0.02, green: 0.02, blue: 0.03)      // #050508
-    public static let surface = Color(red: 0.07, green: 0.07, blue: 0.09)         // #121217
-    public static let surfaceElevated = Color(red: 0.11, green: 0.11, blue: 0.14) // #1C1C24
+    // True OLED & Apple Dark Mode Grouped Surfaces
+    public static let background = Color.black                                   // #000000 Pure OLED
+    public static let surface = Color(red: 0.085, green: 0.085, blue: 0.095)     // #161618
+    public static let surfaceElevated = Color(red: 0.14, green: 0.14, blue: 0.155) // #242427
     public static let border = Color.white.opacity(0.08)
-    public static let borderActive = Color(red: 0.95, green: 0.65, blue: 0.22).opacity(0.35)
+    public static let borderSpecular = LinearGradient(
+        colors: [Color.white.opacity(0.14), Color.white.opacity(0.03)],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+    public static let borderActive = Color(red: 1.0, green: 0.62, blue: 0.04).opacity(0.45)
 
-    // Rally Accent Colors
-    public static let accent = Color(red: 0.95, green: 0.65, blue: 0.22)         // Amber Gold (#F2A638)
-    public static let accentMuted = Color(red: 0.95, green: 0.65, blue: 0.22).opacity(0.15)
-    public static let emerald = Color(red: 0.16, green: 0.75, blue: 0.52)        // Smooth Emerald
-    public static let coral = Color(red: 0.95, green: 0.35, blue: 0.35)          // Soft Warning Red
+    // Refined Apple Dark Mode Accents
+    public static let accent = Color(red: 1.0, green: 0.62, blue: 0.04)          // System Amber (#FF9F0A)
+    public static let accentMuted = Color(red: 1.0, green: 0.62, blue: 0.04).opacity(0.16)
+    public static let emerald = Color(red: 0.19, green: 0.82, blue: 0.35)        // System Green (#30D158)
+    public static let coral = Color(red: 1.0, green: 0.27, blue: 0.23)           // System Red (#FF453A)
+    public static let sky = Color(red: 0.04, green: 0.52, blue: 1.0)             // System Blue (#0A84FF)
     
-    // Typography Grayscale
+    // Apple Label Grayscale
     public static let textPrimary = Color.white
-    public static let textSecondary = Color(red: 0.62, green: 0.63, blue: 0.68)
-    public static let textTertiary = Color(red: 0.40, green: 0.41, blue: 0.46)
+    public static let textSecondary = Color.white.opacity(0.60)
+    public static let textTertiary = Color.white.opacity(0.36)
 }
 
-// MARK: - Minimalist Reusable UI Components
+// MARK: - Apple-Grade Reusable Surfaces & Controls
 
 public struct GlassCard<Content: View>: View {
     public let content: Content
-    public var cornerRadius: CGFloat = 16
-    public var padding: CGFloat = 16
+    public var cornerRadius: CGFloat = 20
+    public var padding: CGFloat = 18
     
-    public init(cornerRadius: CGFloat = 16, padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+    public init(cornerRadius: CGFloat = 20, padding: CGFloat = 18, @ViewBuilder content: () -> Content) {
         self.cornerRadius = cornerRadius
         self.padding = padding
         self.content = content()
@@ -41,8 +47,23 @@ public struct GlassCard<Content: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(AppTheme.border, lineWidth: 1)
+                    .stroke(AppTheme.borderSpecular, lineWidth: 0.6)
             )
+    }
+}
+
+public struct SectionLabel: View {
+    public let text: String
+    
+    public init(_ text: String) {
+        self.text = text
+    }
+    
+    public var body: some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(AppTheme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -61,20 +82,21 @@ public struct StatTile: View {
     
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(AppTheme.textTertiary)
-                .tracking(0.8)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppTheme.textSecondary)
             
-            HStack(alignment: .lastTextBaseline, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
                     .foregroundColor(accentColor)
+                    .contentTransition(.numericText())
                 
                 if let unit = unit {
                     Text(unit)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(AppTheme.textSecondary)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppTheme.textTertiary)
                 }
             }
         }
@@ -97,24 +119,27 @@ public struct PillBadge: View {
     
     public var body: some View {
         Button(action: {
+            #if os(iOS)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            #endif
             action?()
         }) {
             HStack(spacing: 5) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                 }
                 Text(text)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(isSelected ? AppTheme.accent : AppTheme.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(isSelected ? AppTheme.accentMuted : AppTheme.surface)
+            .foregroundColor(isSelected ? .black : AppTheme.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(isSelected ? AppTheme.textPrimary : AppTheme.surface)
             .clipShape(Capsule())
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? AppTheme.accent.opacity(0.5) : AppTheme.border, lineWidth: 1)
+                    .stroke(isSelected ? Color.clear : AppTheme.border, lineWidth: 0.6)
             )
         }
         .buttonStyle(.plain)
@@ -125,41 +150,39 @@ public struct MinimalButton: View {
     public let title: String
     public var icon: String? = nil
     public var isProminent: Bool = true
+    public var tint: Color = AppTheme.accent
     public var action: () -> Void
     
-    public init(title: String, icon: String? = nil, isProminent: Bool = true, action: @escaping () -> Void) {
+    public init(title: String, icon: String? = nil, isProminent: Bool = true, tint: Color = AppTheme.accent, action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
         self.isProminent = isProminent
+        self.tint = tint
         self.action = action
     }
     
     public var body: some View {
         Button(action: {
             #if os(iOS)
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             #endif
             action()
         }) {
             HStack(spacing: 8) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 16, weight: .semibold))
             }
             .foregroundColor(isProminent ? .black : AppTheme.textPrimary)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(isProminent ? AppTheme.accent : AppTheme.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isProminent ? Color.clear : AppTheme.border, lineWidth: 1)
-            )
+            .padding(.vertical, 16)
+            .background(isProminent ? tint : AppTheme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+        .buttonStyle(.plain)
     }
 }
 

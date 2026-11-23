@@ -12,10 +12,10 @@ public enum DashConnectionState: Equatable, Sendable {
     public var displayText: String {
         switch self {
         case .disconnected: return "Disconnected"
-        case .verifyingNetwork: return "Checking Wi-Fi Subnet..."
-        case .requestingAuth: return "Sending K1G Auth (q3c.e)..."
-        case .exchangingKeys: return "Exchanging RSA-1024 Keys..."
-        case .connected: return "Connected (Nav Active)"
+        case .verifyingNetwork: return "Checking Wi-Fi..."
+        case .requestingAuth: return "Authenticating..."
+        case .exchangingKeys: return "Exchanging Keys..."
+        case .connected: return "Connected"
         case .failed(let err): return "Failed: \(err)"
         }
     }
@@ -34,6 +34,35 @@ public final class TripperDashClient: @unchecked Sendable {
     public var listenPort: UInt16 = DashK1GProtocol.phoneListenPort // 2002
     public var isMockMode: Bool = false
     
+    // TFT Digital Homescreen Preferences
+    public var showWeatherOnTFT: Bool = true {
+        didSet { UserDefaults.standard.set(showWeatherOnTFT, forKey: "pref_tft_weather") }
+    }
+    public var showMusicOnTFT: Bool = true {
+        didSet { UserDefaults.standard.set(showMusicOnTFT, forKey: "pref_tft_music") }
+    }
+    public var showSpeedOnTFT: Bool = true {
+        didSet { UserDefaults.standard.set(showSpeedOnTFT, forKey: "pref_tft_speed") }
+    }
+    public var enableVideoProjection: Bool = true {
+        didSet {
+            UserDefaults.standard.set(enableVideoProjection, forKey: "pref_tft_video")
+            if connectionState == .connected && !isMockMode {
+                if enableVideoProjection {
+                    TFTProjectionService.shared.startStreaming(to: dashIP)
+                } else {
+                    TFTProjectionService.shared.stopStreaming()
+                }
+            }
+        }
+    }
+    
+    // Active Navigation State (only streams turn maneuvers when a route is active)
+    public var isNavigationActive: Bool = false
+    public var activeNavStreet: String = ""
+    public var activeNavDistanceMeters: Int = 0
+    public var activeNavIconCode: UInt8 = 0x0B
+    
     // Live Diagnostic Logs for UI display
     public var diagnosticLogs: [String] = []
     
@@ -41,6 +70,7 @@ public final class TripperDashClient: @unchecked Sendable {
     private var rxThread: Thread?
     private var isRunning: Bool = false
     private var rollingSeq: UInt8 = 0
+    private var homescreenTickerIndex: Int = 0
     
     // Background Timers
     private var heartbeatTimer: DispatchSourceTimer?
@@ -63,6 +93,18 @@ public final class TripperDashClient: @unchecked Sendable {
         }
         if let savedIP = UserDefaults.standard.string(forKey: "pref_dash_ip"), !savedIP.isEmpty {
             self.dashIP = savedIP
+        }
+        if UserDefaults.standard.object(forKey: "pref_tft_weather") != nil {
+            self.showWeatherOnTFT = UserDefaults.standard.bool(forKey: "pref_tft_weather")
+        }
+        if UserDefaults.standard.object(forKey: "pref_tft_music") != nil {
+            self.showMusicOnTFT = UserDefaults.standard.bool(forKey: "pref_tft_music")
+        }
+        if UserDefaults.standard.object(forKey: "pref_tft_speed") != nil {
+            self.showSpeedOnTFT = UserDefaults.standard.bool(forKey: "pref_tft_speed")
+        }
+        if UserDefaults.standard.object(forKey: "pref_tft_video") != nil {
+            self.enableVideoProjection = UserDefaults.standard.bool(forKey: "pref_tft_video")
         }
     }
     
@@ -167,6 +209,7 @@ public final class TripperDashClient: @unchecked Sendable {
     
     public func disconnect() {
         stopAllTimers()
+        TFTProjectionService.shared.stopStreaming()
         isMockMode = false
         
         // Send projection teardown TLVs if was running
@@ -414,16 +457,16 @@ public final class TripperDashClient: @unchecked Sendable {
             sendRawPacket(ackPkt)
             
             switch buttonByte {
-            case 0x13:
+            case 0x13, 0x02:
                 log("🎮 Handlebar Joystick: RIGHT")
                 dispatchJoystick(.right)
-            case 0x14:
+            case 0x14, 0x01:
                 log("🎮 Handlebar Joystick: LEFT")
                 dispatchJoystick(.left)
-            case 0x15:
+            case 0x15, 0x03:
                 log("🎮 Handlebar Joystick: DOWN")
                 dispatchJoystick(.down)
-            case 0x18:
+            case 0x18, 0x04:
                 log("🎮 Handlebar Joystick: CENTER CLICK")
                 dispatchJoystick(.centerClick)
             case 0x05:
@@ -431,7 +474,7 @@ public final class TripperDashClient: @unchecked Sendable {
                 dispatchJoystick(.up)
             case 0xFE:
                 log("📞 Remote Command: Simulate Incoming Call")
-                CallHandlingService.shared.simulateIncomingCall(caller: "Royal Enfield Support")
+                CallHandlingService.shared.simulateIncomingCall(caller: "Royal Enfield Rider")
             default:
                 log("🎮 Unknown button byte: 0x\(String(format: "%02X", buttonByte))")
             }
@@ -450,9 +493,9 @@ public final class TripperDashClient: @unchecked Sendable {
         }
     }
     
-    // MARK: - Post-Auth Navigation Transition Sequence
+    // MARK: - Post-Auth Digital Homescreen & Projection Sequence
     private func enterNavigationMode() {
-        log("Driving Dash to Navigation Mode...")
+        log("Activating TFT Digital Homescreen (Weather, Music & Calls)...")
         
         // 1. Navigation Context + Empty Lists
         for hex in [DashK1GProtocol.q3c_q_nav_ctx, DashK1GProtocol.q3c_r_empty_lists] {
@@ -462,8 +505,9 @@ public final class TripperDashClient: @unchecked Sendable {
             }
         }
         
-        // 2. Pre-z2 Route Card Burst (4 times with 0.25s gap) - establishes route surface
-        let routePkt = DashK1GProtocol.buildRouteCardPacket(title: "OpenDash Navigation", seq: nextSeq(), projectionOn: false)
+        // 2. Pre-z2 Homescreen Surface Burst (establishes Digital Mode projection surface)
+        let bannerTitle = buildHomescreenBannerTitle()
+        let routePkt = DashK1GProtocol.buildRouteCardPacket(title: bannerTitle, seq: nextSeq(), projectionOn: false)
         for _ in 0..<4 {
             sendRawPacket(routePkt)
             Thread.sleep(forTimeInterval: 0.25)
@@ -474,48 +518,130 @@ public final class TripperDashClient: @unchecked Sendable {
             sendRawPacket(DashK1GProtocol.patchSequence(data: gPkt, seq: nextSeq()))
         }
         
-        // 4. Start Navigation Command (q3c.z2)
+        // 4. Start Digital Surface Projection Command (q3c.z2)
         if let z2Pkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_z2_start_nav) {
             sendRawPacket(DashK1GProtocol.patchSequence(data: z2Pkt, seq: nextSeq()))
         }
         
-        // 5. Post-z2 confirmation route card with projection ON
-        let routePktOn = DashK1GProtocol.buildRouteCardPacket(title: "OpenDash Navigation", seq: nextSeq(), projectionOn: true)
+        // 5. Post-z2 confirmation card with projection ON
+        let routePktOn = DashK1GProtocol.buildRouteCardPacket(title: bannerTitle, seq: nextSeq(), projectionOn: true)
         sendRawPacket(routePktOn)
         
-        // 6. Start Keepalive Loops (Heartbeat + Route-Card + Projection Frame)
+        // 6. Push initial Weather & Music metadata immediately
+        sendWeatherUpdate()
+        let media = MediaPlaybackService.shared
+        sendMusicUpdate(title: media.currentTitle, artist: media.currentArtist, isPlaying: media.isPlaying)
+        
+        // 7. Start H.264 Digital Homescreen Video Stream (UDP 5000) if enabled & real socket connected
+        if enableVideoProjection && !isMockMode {
+            TFTProjectionService.shared.startStreaming(to: dashIP)
+        }
+        
+        // 8. Start Keepalive Loops (Live Heartbeat + Homescreen/Nav + Projection Frame)
         startAllKeepalives()
-        log("✅ Navigation mode active & keepalives running.")
+        log("✅ TFT Digital Homescreen active & synced.")
+    }
+    
+    /// Builds the live UTF-8 TFT banner string (Weather + Now Playing when idle, Street when navigating)
+    private func buildHomescreenBannerTitle() -> String {
+        if isNavigationActive && !activeNavStreet.isEmpty {
+            return activeNavStreet
+        }
+        let call = CallHandlingService.shared
+        if call.isRinging {
+            return "Call: \(call.callerName)"
+        }
+        if call.isOngoing {
+            return "On Call \(call.formattedDuration) · \(call.callerName)"
+        }
+        
+        let weather = WeatherService.shared
+        let media = MediaPlaybackService.shared
+        
+        var parts: [String] = []
+        if showWeatherOnTFT {
+            parts.append(weather.compactTFTString)
+        }
+        if showMusicOnTFT && media.currentTitle != "Not Playing" && !media.currentTitle.isEmpty {
+            parts.append("♪ \(media.currentTitle)")
+        }
+        
+        if parts.isEmpty {
+            return "TripperDash Ready"
+        }
+        return parts.joined(separator: " · ")
     }
     
     // MARK: - Timers & Keepalives
     private func startAllKeepalives() {
         stopAllTimers()
         
-        // Timer 1: 1 Hz Status Heartbeat (0044 + 0030)
+        // Timer 1: 1 Hz Live Status Heartbeat (0044 + 0030) with REAL Battery, Weather Temp, Music & Call State
         let hbTimer = DispatchSource.makeTimerSource(flags: .strict, queue: heartbeatQueue)
         hbTimer.schedule(deadline: .now(), repeating: .milliseconds(1000), leeway: .milliseconds(50))
         hbTimer.setEventHandler { [weak self] in
             guard let self = self, self.connectionState == .connected else { return }
-            let hb0044 = K1GPacket.makeHeartbeatPacket()
+            
+            let battery = BatteryOptimizationService.shared
+            let weather = WeatherService.shared
+            let media = MediaPlaybackService.shared
+            let call = CallHandlingService.shared
+            
+            let callCode: UInt8 = call.isRinging ? 0x31 : (call.isOngoing ? 0x32 : 0x30)
+            
+            let hb0044 = K1GPacket.makeHeartbeatPacket(
+                batteryPct: battery.batteryLevelPercent,
+                charging: battery.isCharging,
+                gpsOn: true,
+                tempC: weather.temperatureC,
+                cellSignal: 255,
+                isMusicPlaying: media.isPlaying,
+                callStatusCode: callCode
+            )
             self.sendRawPacket(DashK1GProtocol.patchSequence(data: hb0044, seq: self.nextSeq()))
-            let hb0030 = K1GPacket.makeMetadata0030Packet()
+            
+            let hb0030 = K1GPacket.makeMetadata0030Packet(
+                cellSignal: 255,
+                isMusicPlaying: media.isPlaying,
+                callStatusCode: callCode
+            )
             self.sendRawPacket(DashK1GProtocol.patchSequence(data: hb0030, seq: self.nextSeq()))
         }
         hbTimer.resume()
         self.heartbeatTimer = hbTimer
         
-        // Timer 2: 1 Hz Route Card Keep-alive (Prevents 15-second dash watchdog timeout)
+        // Timer 2: 1 Hz TFT Homescreen / Route Card Keep-alive (Prevents 15s watchdog timeout)
         let rcTimer = DispatchSource.makeTimerSource(flags: .strict, queue: heartbeatQueue)
         rcTimer.schedule(deadline: .now() + 1.0, repeating: .milliseconds(1000), leeway: .milliseconds(50))
         rcTimer.setEventHandler { [weak self] in
             guard let self = self, self.connectionState == .connected else { return }
-            let rcPkt = DashK1GProtocol.buildRouteCardPacket(title: "OpenDash Navigation", seq: self.nextSeq(), projectionOn: true)
+            
+            let banner = self.buildHomescreenBannerTitle()
+            let rcPkt = DashK1GProtocol.buildRouteCardPacket(title: banner, seq: self.nextSeq(), projectionOn: true)
             self.sendRawPacket(rcPkt)
             
-            // Also send active instruction packet
-            let navInfo = DashK1GProtocol.buildActiveNavPacket(maneuver: 0x0B, nextMeters: 500, totalMeters: 1200, seq: self.nextSeq())
-            self.sendRawPacket(navInfo)
+            // ONLY stream turn-by-turn maneuver cards when a route is actively being navigated!
+            if self.isNavigationActive {
+                let navInfo = DashK1GProtocol.buildActiveNavPacket(
+                    maneuver: self.activeNavIconCode,
+                    nextMeters: self.activeNavDistanceMeters,
+                    totalMeters: self.activeNavDistanceMeters,
+                    seq: self.nextSeq()
+                )
+                self.sendRawPacket(navInfo)
+            }
+            
+            // Every 5 seconds refresh rich Weather + Music TLVs on TFT Homescreen
+            self.homescreenTickerIndex += 1
+            if self.homescreenTickerIndex % 5 == 0 {
+                if self.showWeatherOnTFT {
+                    self.sendWeatherUpdate()
+                }
+                if self.showMusicOnTFT {
+                    let media = MediaPlaybackService.shared
+                    self.sendMusicUpdate(title: media.currentTitle, artist: media.currentArtist, isPlaying: media.isPlaying)
+                }
+            }
         }
         rcTimer.resume()
         self.routeCardKeepaliveTimer = rcTimer
@@ -581,61 +707,95 @@ public final class TripperDashClient: @unchecked Sendable {
         return s
     }
     
-    // MARK: - Public Actions for Nav, Music, Call
+    // MARK: - Public Actions for Nav, Music, Weather, Call
     public func sendManeuver(iconCode: UInt8, distanceMeters: UInt32, streetName: String) {
-        let packet = K1GPacket.makeManeuverPacket(iconCode: iconCode, distanceMeters: distanceMeters, streetName: streetName)
+        DispatchQueue.main.async {
+            self.isNavigationActive = true
+            self.activeNavIconCode = iconCode
+            self.activeNavDistanceMeters = Int(distanceMeters)
+            self.activeNavStreet = streetName
+        }
+        let packet = DashK1GProtocol.buildActiveNavPacket(
+            maneuver: iconCode,
+            nextMeters: Int(distanceMeters),
+            totalMeters: Int(distanceMeters),
+            seq: nextSeq()
+        )
         sendRawPacket(packet)
     }
     
+    public func stopNavigation() {
+        DispatchQueue.main.async {
+            self.isNavigationActive = false
+            self.activeNavStreet = ""
+            self.activeNavDistanceMeters = 0
+        }
+        log("🧭 Returned TFT to Digital Homescreen (Weather & Music)")
+    }
+    
     public func sendMusicUpdate(title: String, artist: String, isPlaying: Bool) {
-        let packet = K1GPacket.makeMusicInfoPacket(title: title, artist: artist, isPlaying: isPlaying)
-        sendRawPacket(packet)
+        let vol = MediaPlaybackService.shared.volumePercent
+        let packet = K1GPacket.makeMusicInfoPacket(title: title, artist: artist, isPlaying: isPlaying, volumePercent: vol)
+        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
+    }
+    
+    public func sendWeatherUpdate() {
+        let w = WeatherService.shared
+        let packet = K1GPacket.makeWeatherPacket(
+            tempC: w.temperatureC,
+            condition: w.conditionText,
+            location: w.locationName,
+            windKmh: w.windSpeedKmh
+        )
+        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
     }
     
     public func sendCallAlert(callerName: String, isRinging: Bool, isOngoing: Bool, durationSeconds: UInt32) {
         let packet = K1GPacket.makeCallAlertPacket(callerName: callerName, isRinging: isRinging, isOngoing: isOngoing, durationSeconds: durationSeconds)
-        sendRawPacket(packet)
+        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
     }
     
     private func dispatchJoystick(_ event: DashJoystickEvent) {
-        DispatchQueue.main.async {
+        // Always execute joystick actions on MainActor so CallHandlingService & MediaPlaybackService state is 100% thread-safe!
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.lastJoystickEvent = event
-        }
-        
-        let callService = CallHandlingService.shared
-        let mediaService = MediaPlaybackService.shared
-        
-        // Priority 1: Incoming / Ongoing Phone Calls
-        if callService.isRinging {
-            if event == .centerClick || event == .up {
-                log("📞 Answering incoming call via handlebar...")
-                callService.answerCall()
-                return
-            } else if event == .down {
-                log("📞 Rejecting incoming call via handlebar...")
-                callService.endOrRejectCall()
-                return
+            
+            let callService = CallHandlingService.shared
+            let mediaService = MediaPlaybackService.shared
+            
+            // Priority 1: Incoming / Ongoing Phone Calls
+            if callService.isRinging {
+                if event == .centerClick || event == .up {
+                    self.log("📞 Answering incoming call via handlebar...")
+                    callService.answerCall()
+                    return
+                } else if event == .down {
+                    self.log("📞 Rejecting incoming call via handlebar...")
+                    callService.endOrRejectCall()
+                    return
+                }
+            } else if callService.isOngoing {
+                if event == .down || event == .centerClick {
+                    self.log("📞 Ending ongoing call via handlebar...")
+                    callService.endOrRejectCall()
+                    return
+                }
             }
-        } else if callService.isOngoing {
-            if event == .down || event == .centerClick {
-                log("📞 Ending ongoing call via handlebar...")
-                callService.endOrRejectCall()
-                return
+            
+            // Priority 2: Riding Controls (Music playback & System Volume)
+            switch event {
+            case .centerClick:
+                mediaService.togglePlayPause()
+            case .right:
+                mediaService.nextTrack()
+            case .left:
+                mediaService.previousTrack()
+            case .up:
+                mediaService.volumeUp()
+            case .down:
+                mediaService.volumeDown()
             }
-        }
-        
-        // Priority 2: Riding Controls (Music playback & Volume)
-        switch event {
-        case .centerClick:
-            mediaService.togglePlayPause()
-        case .right:
-            mediaService.nextTrack()
-        case .left:
-            mediaService.previousTrack()
-        case .up:
-            mediaService.volumeUp()
-        case .down:
-            mediaService.volumeDown()
         }
     }
     

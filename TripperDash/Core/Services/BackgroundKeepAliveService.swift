@@ -25,7 +25,8 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
         #if os(iOS)
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .voicePrompt, options: [.mixWithOthers, .duckOthers])
+            // Use .mixWithOthers ONLY (no .duckOthers) so background keep-alive never lowers Spotify/Apple Music volume
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
         } catch {
             print("BackgroundKeepAliveService audio session error: \(error)")

@@ -11,9 +11,13 @@ public final class AppState: @unchecked Sendable {
     public let media = MediaPlaybackService.shared
     public let call = CallHandlingService.shared
     public let battery = BatteryOptimizationService.shared
+    public let weather = WeatherService.shared
+    public let projection = TFTProjectionService.shared
     
     public init() {
         tracker.requestPermissions()
         tracker.startLiveTracking()
+        projection.attachTracker(tracker)
+        weather.refresh(for: tracker.currentLocation)
     }
 }

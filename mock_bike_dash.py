@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
-Royal Enfield TFT Dash Simulator (K1G UDP Protocol)
-Simulates the Himalayan 450 / Guerrilla 450 TFT Instrument Cluster locally.
-
-Enables full desk testing of:
-- UDP discovery & K1G RSA-1024 Handshake
-- Live Turn-by-Turn Navigation & Route Cards
-- Handlebar Joystick (Left, Right, Center Click, Down) via Mac keyboard
-- Music Playback Info & Skip/Pause via Handlebar
-- Incoming Call Alerts & Handlebar Answer/Reject
-- 1Hz Background Heartbeat Telemetry
+Royal Enfield Himalayan 450 TFT Digital Dash Simulator (K1G UDP + RTP Video)
+Simulates both:
+  - UDP/2000 & 2002: K1G Control Plane (RSA Handshake, Homescreen Banner, Weather, Music, Volume, Calls, Joystick)
+  - UDP/5000: H.264 RTP Video Projection Receiver (verifies live Digital Homescreen frames & FPS)
 """
 
 import socket
@@ -18,42 +12,56 @@ import time
 import sys
 import os
 
-# Precomputed 1024-bit RSA Public Key for K1G Handshake
 RSA_MODULUS_HEX = (
     "c5e7d1c0695a28b60ec73ea3bee8ebf1987bd101cc1f98f63effddb4942a42ead648c4fe08801b2168"
     "2fe787cd1e44001cb5c351b10f8c174a4ceb078cf9465a1d89d8d561e5b02e0445bf86d0a34f1a9316"
     "b9d87709e6f43ce201ef8c5a10d7599d65ed49c7035cfcbe4ea9e66618a7dc8f7722cfbd6902827e54"
     "b46cf0c185"
 )
-RSA_EXPONENT_HEX = "010001"  # 65537
+RSA_EXPONENT_HEX = "010001"
 
 DASH_LISTEN_PORT = 2000
 PHONE_LISTEN_PORT = 2002
+VIDEO_RTP_PORT = 5000
+
 
 class MockBikeDash:
     def __init__(self):
+        # K1G Control UDP Socket (Port 2000)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.bind(("0.0.0.0", DASH_LISTEN_PORT))
-        
+
+        # H.264 RTP Video Projection Socket (Port 5000)
+        self.video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.video_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.video_sock.bind(("0.0.0.0", VIDEO_RTP_PORT))
+
         self.client_ip = None
         self.running = True
         self.is_authenticated = False
-        
-        # State display
-        self.destination_title = "None"
-        self.maneuver = "Straight"
-        self.distance_turn = 0
-        self.distance_total = 0
-        self.music_title = "None"
-        self.music_artist = "None"
-        self.call_caller = "None"
-        self.call_status = "IDLE ⚪"
-        self.music_status = "IDLE ⚪"
+
+        # Live TFT Digital Homescreen State
+        self.homescreen_banner = "Standby"
+        self.weather_summary = "Waiting for GPS..."
+        self.temp_c = 25
+        self.battery_pct = 100
+        self.music_title = "Not Playing"
+        self.music_artist = ""
+        self.music_playing = False
+        self.volume_pct = 50
+        self.call_state = "IDLE"
+        self.caller_name = ""
+        self.call_duration = 0
         self.heartbeat_count = 0
+        self.video_packets = 0
+        self.video_frames = 0
+        self.video_fps = 0.0
+        self._last_fps_ts = time.time()
+        self._frames_in_window = 0
         self.last_seen_time = time.time()
-        
+
     def get_local_ip(self):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -68,7 +76,7 @@ class MockBikeDash:
         seg_len = len(payload_bytes)
         seg = bytes([seg_type, seg_sub, (seg_len >> 8) & 0xFF, seg_len & 0xFF]) + payload_bytes
         total_len = len(seg) + 8
-        hdr = bytes([ (total_len >> 8) & 0xFF, total_len & 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 ])
+        hdr = bytes([(total_len >> 8) & 0xFF, total_len & 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
         return hdr + seg
 
     def send_to_phone(self, data):
@@ -77,115 +85,101 @@ class MockBikeDash:
         try:
             self.sock.sendto(data, (self.client_ip, PHONE_LISTEN_PORT))
         except Exception as e:
-            print(f"[Error sending to phone: {e}]")
+            print(f"\n[Error sending to phone: {e}]")
 
     def handle_auth_request(self):
-        print(f"\n🔐 [K1G] Received Handshake Request from iPhone ({self.client_ip})!")
-        print("   -> Sending Dash RSA-1024 Public Key Modulus & Exponent...")
-        
-        # Send Modulus segment (07 00)
-        mod_bytes = bytes.fromhex(RSA_MODULUS_HEX)
-        pkt_mod = self.make_k1g_packet(0x07, 0x00, mod_bytes)
-        self.send_to_phone(pkt_mod)
+        print(f"\n🔐 [K1G] Handshake Request from iPhone ({self.client_ip})")
+        print("   → Sending Dash RSA-1024 Public Key...")
+        self.send_to_phone(self.make_k1g_packet(0x07, 0x00, bytes.fromhex(RSA_MODULUS_HEX)))
         time.sleep(0.02)
-        
-        # Send Exponent segment (07 03)
-        exp_bytes = bytes.fromhex(RSA_EXPONENT_HEX)
-        pkt_exp = self.make_k1g_packet(0x07, 0x03, exp_bytes)
-        self.send_to_phone(pkt_exp)
+        self.send_to_phone(self.make_k1g_packet(0x07, 0x03, bytes.fromhex(RSA_EXPONENT_HEX)))
 
     def handle_session_key(self, data):
-        print(f"\n🔑 [K1G] Received Encrypted Session Key (q3c.d, {len(data)} bytes)!")
-        print("   -> Sending Authentication OK (07 01 01)...")
-        
-        # Send Auth OK segment (07 01 01)
-        pkt_ok = self.make_k1g_packet(0x07, 0x01, bytes([0x01]))
-        self.send_to_phone(pkt_ok)
+        print(f"🔑 [K1G] Received Encrypted Session Key ({len(data)} B) → Sending Auth OK (07 01 01)")
+        self.send_to_phone(self.make_k1g_packet(0x07, 0x01, bytes([0x01])))
         self.is_authenticated = True
-        print("   ✅ *** DASH AUTHENTICATION SUCCESSFUL! BIKE LINKED ***\n")
+        print("✅ *** HIMALAYAN 450 TFT CONNECTED ***\n")
+
+    def parse_tlvs(self, data):
+        """Parses standard K1G TLV segments starting at byte offset 8."""
+        if len(data) < 8:
+            return []
+        seg_count = (data[2] << 8) | data[3]
+        offset = 8
+        tlvs = []
+        for _ in range(seg_count):
+            if offset + 4 > len(data):
+                break
+            t = data[offset]
+            sub = data[offset + 1]
+            slen = (data[offset + 2] << 8) | data[offset + 3]
+            offset += 4
+            payload = data[offset : offset + slen]
+            offset += slen
+            tlvs.append((t, sub, payload))
+        return tlvs
 
     def decode_packet(self, data):
         self.last_seen_time = time.time()
         if len(data) < 8:
             return
-        
+
         hex_data = data.hex().upper()
-        
-        # 1. Check for initial auth request (q3c.e)
-        if "0804000101" in hex_data or "4B3147" in hex_data and not self.is_authenticated:
+
+        # Handshake detection
+        if not self.is_authenticated:
             if "00950002" in hex_data or len(data) >= 140:
                 self.handle_session_key(data)
-            else:
+                return
+            if "0804000101" in hex_data or "4B3147" in hex_data:
                 self.handle_auth_request()
-            return
-        
-        # 2. Check for encrypted session key
-        if "00950002" in hex_data and not self.is_authenticated:
-            self.handle_session_key(data)
-            return
+                return
 
-        # 3. Handle Route Card packets (05 01 ...)
-        if b"OpenDash" in data or "0501" in hex_data:
-            idx = hex_data.find("0501")
-            if idx != -1:
-                try:
-                    str_len = int(hex_data[idx+4:idx+8], 16)
-                    start = (idx + 8) // 2
-                    title_raw = data[start:start+str_len].split(b'\x00')[0]
-                    self.destination_title = title_raw.decode('utf-8', errors='ignore')
-                except Exception:
-                    pass
-
-        # 4. Handle Heartbeat (0044)
         if hex_data.startswith("0044"):
             self.heartbeat_count += 1
 
-        # 5. Handle Maneuver (0502)
-        if "05020001" in hex_data:
-            idx = hex_data.find("05020001")
-            m_code = int(hex_data[idx+8:idx+10], 16)
-            maneuvers = {
-                0x01: "Start", 0x02: "Continue", 0x03: "Turn Slight Right",
-                0x04: "Turn Right", 0x05: "Turn Sharp Right", 0x06: "U-Turn",
-                0x07: "Turn Sharp Left", 0x08: "Turn Left", 0x09: "Turn Slight Left",
-                0x0B: "Navigation Active", 0x1B: "Roundabout", 0x1F: "Arrived at Destination"
-            }
-            self.maneuver = maneuvers.get(m_code, f"Maneuver 0x{m_code:02X}")
-            
-            # Next distance (05040002XXXX)
-            if "05040002" in hex_data:
-                d_idx = hex_data.find("05040002")
-                self.distance_turn = int(hex_data[d_idx+8:d_idx+12], 16)
-            # Total distance (05090002XXXX)
-            if "05090002" in hex_data:
-                t_idx = hex_data.find("05090002")
-                self.distance_total = int(hex_data[t_idx+8:t_idx+12], 16)
-
-        # 6. Handle Call State (05210001XX: 31 = Ringing, 32 = Ongoing, 30 = Idle)
-        if "05210001" in hex_data:
-            idx = hex_data.find("05210001")
-            status_code = hex_data[idx+8:idx+10]
-            if status_code == "31":
-                self.call_status = "RINGING 📞"
-            elif status_code == "32":
-                self.call_status = "ONGOING 🟢"
-            else:
-                self.call_status = "IDLE ⚪"
-
-        # 7. Handle Music Play/Pause (054C0001XX: 18 = Playing, 10/15 = Paused)
-        if "054C0001" in hex_data:
-            idx = hex_data.find("054C0001")
-            m_vol = hex_data[idx+8:idx+10]
-            self.music_status = "PLAYING ▶️" if m_vol == "18" else "PAUSED ⏸️"
+        # Decode every structured TLV cleanly
+        for t, sub, payload in self.parse_tlvs(data):
+            if t == 0x05 and sub == 0x01:
+                # TFT Digital Homescreen Banner / Destination
+                txt = payload.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+                if txt:
+                    self.homescreen_banner = txt
+            elif t == 0x05 and sub == 0x4C and len(payload) >= 1:
+                self.music_playing = (payload[0] == 0x18)
+            elif t == 0x05 and sub == 0x4E:
+                self.music_title = payload.split(b"\x00")[0].decode("utf-8", errors="ignore").strip() or "Not Playing"
+            elif t == 0x05 and sub == 0x4F:
+                self.music_artist = payload.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+            elif t == 0x05 and sub == 0x50 and len(payload) >= 1:
+                self.volume_pct = payload[0]
+            elif t == 0x05 and sub == 0x51:
+                self.weather_summary = payload.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+            elif t == 0x06 and sub == 0x10 and len(payload) >= 1:
+                self.temp_c = payload[0] - 40
+            elif t == 0x06 and sub == 0x04 and len(payload) >= 1:
+                self.battery_pct = max(0, min(100, payload[0] - 100))
+            elif t == 0x05 and sub == 0x21 and len(payload) >= 1:
+                code = payload[0]
+                if code == 0x31:
+                    self.call_state = "RINGING 📞"
+                elif code == 0x32:
+                    self.call_state = "ONGOING 🟢"
+                else:
+                    self.call_state = "IDLE"
+                    self.call_duration = 0
+            elif t == 0x05 and sub == 0x22:
+                self.caller_name = payload.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+            elif t == 0x05 and sub == 0x23 and len(payload) >= 2:
+                self.call_duration = (payload[0] << 8) | payload[1]
 
     def send_joystick(self, byte_val, name):
-        """Sends handlebar joystick event to phone on port 2002."""
         if not self.client_ip:
-            print("⚠️ Cannot send joystick event: No phone connected yet!")
+            print("⚠️  No iPhone connected yet! Enter this Mac's IP in Settings and tap Connect.")
             return
         pkt = self.make_k1g_packet(0x09, 0x00, bytes([byte_val]))
         self.send_to_phone(pkt)
-        print(f"🎮 [Handlebar] Sent Joystick '{name}' (0x{byte_val:02X}) to {self.client_ip}:2002")
+        print(f"\n🎮 [Joystick → iPhone] {name} (0x{byte_val:02X})")
 
     def rx_loop(self):
         while self.running:
@@ -196,21 +190,50 @@ class MockBikeDash:
             except Exception:
                 break
 
+    def video_rx_loop(self):
+        while self.running:
+            try:
+                data, _ = self.video_sock.recvfrom(65535)
+                self.video_packets += 1
+                # RTP marker bit (byte 1 bit 7) indicates end of an encoded H.264 video frame
+                if len(data) >= 12 and (data[1] & 0x80):
+                    self.video_frames += 1
+                    self._frames_in_window += 1
+                    now = time.time()
+                    elapsed = now - self._last_fps_ts
+                    if elapsed >= 2.0:
+                        self.video_fps = self._frames_in_window / elapsed
+                        self._frames_in_window = 0
+                        self._last_fps_ts = now
+            except Exception:
+                break
+
     def display_loop(self):
         while self.running:
             time.sleep(1.0)
             if not self.is_authenticated:
                 continue
-            
-            status_text = f"LINKED ({self.client_ip})" if (time.time() - self.last_seen_time < 4) else "DISCONNECTED"
+
+            call_str = self.call_state
+            if self.call_state.startswith("ONGOING"):
+                mins, secs = divmod(self.call_duration, 60)
+                call_str = f"ONGOING {mins:02d}:{secs:02d} ({self.caller_name})"
+            elif self.call_state.startswith("RINGING"):
+                call_str = f"RINGING ({self.caller_name})"
+
+            music_icon = "▶️" if self.music_playing else "⏸️"
+            song_str = f"{music_icon} {self.music_title}" + (f" - {self.music_artist}" if self.music_artist else "")
+            video_str = f"{self.video_fps:.1f}fps" if self.video_packets > 0 else "off"
+
             line = (
-                f"\r\033[K🏍️  [TFT DASH] {status_text} | Call: {self.call_status} | Music: {self.music_status} | "
-                f"Dest: {self.destination_title[:15]} | Heartbeats: {self.heartbeat_count}"
+                f"\r\033[K🏍️  [TFT] {self.weather_summary} | "
+                f"{song_str[:24]} | Vol {self.volume_pct}% | "
+                f"Call: {call_str} | H264: {video_str} | Bat {self.battery_pct}%"
             )
             try:
-                term_cols = os.get_terminal_size().columns
-                if len(line) - 5 > term_cols:
-                    line = line[:term_cols + 4]
+                cols = os.get_terminal_size().columns
+                if len(line) - 6 > cols:
+                    line = line[: cols + 3]
             except Exception:
                 pass
             sys.stdout.write(line)
@@ -218,66 +241,58 @@ class MockBikeDash:
 
     def run(self):
         local_ip = self.get_local_ip()
-        print("=" * 68)
-        print("      ROYAL ENFIELD TFT DASH SIMULATOR (HIMALAYAN 450 K1G)      ")
-        print("=" * 68)
-        print(f"  📡 Mock Bike Listening on : 0.0.0.0:{DASH_LISTEN_PORT}")
-        print(f"  💻 Mac Wi-Fi IP Address   : {local_ip}")
-        print(f"  📱 Enter this IP in App   : {local_ip}")
-        print("=" * 68)
-        print("  Instructions:")
-        print(f"  1. Ensure your iPhone & Mac are on the same Wi-Fi.")
-        print(f"  2. In TripperDash on iPhone -> Settings tab:")
-        print(f"     Set 'Dash IP' to: {local_ip}")
-        print(f"  3. Tap 'Connect' in the app.")
-        print("=" * 68)
-        print("  Handlebar Controls (Type letter & press Enter):")
-        print("    [r]    Right        -> Next Music Track")
-        print("    [l]    Left         -> Previous Music Track")
-        print("    [c]    Center Click -> Play / Pause (or Answer incoming call)")
-        print("    [u]    Up           -> Volume UP (or Answer incoming call)")
-        print("    [d]    Down         -> Volume DOWN (or Reject / End call)")
-        print("    [call] Test Call    -> Trigger simulated incoming call on phone")
+        print("=" * 72)
+        print("      ROYAL ENFIELD HIMALAYAN 450 TFT DIGITAL DASH SIMULATOR      ")
+        print("=" * 72)
+        print(f"  📡 Control Port : UDP/{DASH_LISTEN_PORT}   |   📺 Video Stream : UDP/{VIDEO_RTP_PORT}")
+        print(f"  💻 Mac Wi-Fi IP : {local_ip}")
+        print(f"  📱 In iPhone App → Settings → Dash Host IP = {local_ip} → Connect")
+        print("=" * 72)
+        print("  Handlebar Joystick Controls (type command & press Enter):")
+        print("    [u]    Joystick UP     → Volume UP   (or Answer Ringing Call)")
+        print("    [d]    Joystick DOWN   → Volume DOWN (or Decline / End Call)")
+        print("    [c]    Center Click    → Play/Pause  (or Answer / End Call)")
+        print("    [r]    Joystick RIGHT  → Next Track")
+        print("    [l]    Joystick LEFT   → Previous Track")
+        print("    [call] Simulate Call   → Ring iPhone to test Answer & Drop")
         print("    [q]    Quit")
-        print("=" * 68)
+        print("=" * 72)
         print("Waiting for iPhone connection...\n")
 
-        t_rx = threading.Thread(target=self.rx_loop, daemon=True)
-        t_rx.start()
-
-        t_disp = threading.Thread(target=self.display_loop, daemon=True)
-        t_disp.start()
+        threading.Thread(target=self.rx_loop, daemon=True).start()
+        threading.Thread(target=self.video_rx_loop, daemon=True).start()
+        threading.Thread(target=self.display_loop, daemon=True).start()
 
         while self.running:
             try:
                 cmd = input().strip().lower()
-                if cmd == 'q':
-                    print("\nExiting simulator...")
+                if cmd == "q":
+                    print("\nExiting TFT Simulator...")
                     self.running = False
                     break
-                elif cmd == 'r':
+                elif cmd == "u":
+                    self.send_joystick(0x05, "UP (Vol + / Answer)")
+                elif cmd == "d":
+                    self.send_joystick(0x15, "DOWN (Vol - / Decline or End Call)")
+                elif cmd == "c":
+                    self.send_joystick(0x18, "CENTER (Play/Pause / Answer or End Call)")
+                elif cmd == "r":
                     self.send_joystick(0x13, "RIGHT (Next Track)")
-                elif cmd == 'l':
-                    self.send_joystick(0x14, "LEFT (Prev Track)")
-                elif cmd == 'c':
-                    self.send_joystick(0x18, "CENTER (Play/Pause/Answer)")
-                elif cmd == 'd':
-                    self.send_joystick(0x15, "DOWN (Vol Down / End Call)")
-                elif cmd == 'u':
-                    self.send_joystick(0x05, "UP (Vol Up / Answer Call)")
-                elif cmd == 'call':
+                elif cmd == "l":
+                    self.send_joystick(0x14, "LEFT (Previous Track)")
+                elif cmd == "call":
                     self.send_joystick(0xFE, "SIMULATE INCOMING CALL")
-                    print("📞 [Simulator] Triggered incoming call on iPhone from 'Royal Enfield Support'!")
-                elif cmd == '':
+                elif cmd == "":
                     pass
                 else:
-                    print(f"Unknown command '{cmd}'. Available: [r], [l], [c], [u], [d], [call], [q]")
+                    print(f"\nUnknown command '{cmd}'. Use: u, d, c, r, l, call, q")
             except (KeyboardInterrupt, EOFError):
                 break
 
         self.running = False
         self.sock.close()
+        self.video_sock.close()
+
 
 if __name__ == "__main__":
-    dash = MockBikeDash()
-    dash.run()
+    MockBikeDash().run()

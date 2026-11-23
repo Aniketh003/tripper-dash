@@ -25,8 +25,7 @@ public enum DashAuthCrypto {
         // 2. Create SecKey from DER
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
-            kSecAttrKeySizeInBits as String: 1024
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic
         ]
         
         var error: Unmanaged<CFError>?
@@ -69,14 +68,18 @@ public enum DashAuthCrypto {
     }
     
     private static func encodeASN1Integer(_ data: Data) -> Data {
-        var value = data
+        var value = [UInt8](data)
+        // In DER integer encoding, remove redundant leading zeros
+        while value.count > 1 && value[0] == 0 && (value[1] & 0x80) == 0 {
+            value.removeFirst()
+        }
         // If highest bit is 1, prefix with 0x00 to denote positive signed integer
         if let first = value.first, (first & 0x80) != 0 {
             value.insert(0x00, at: 0)
         }
         var result = Data([0x02]) // INTEGER Tag
         result.append(encodeASN1Length(value.count))
-        result.append(value)
+        result.append(contentsOf: value)
         return result
     }
     

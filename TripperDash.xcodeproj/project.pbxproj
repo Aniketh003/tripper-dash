@@ -1,0 +1,373 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10001 /* TripperDashApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* TripperDashApp.swift */; };
+		A10002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002 /* AppState.swift */; };
+		A10003 /* MinimalTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* MinimalTheme.swift */; };
+		A10004 /* LocationTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* LocationTracker.swift */; };
+		A10005 /* PolylineDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005 /* PolylineDecoder.swift */; };
+		A10006 /* RouteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006 /* RouteService.swift */; };
+		A10007 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007 /* Models.swift */; };
+		A10008 /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10008 /* DatabaseService.swift */; };
+		A10009 /* VehicleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009 /* VehicleStore.swift */; };
+		A10010 /* FirebaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10010 /* FirebaseManager.swift */; };
+		A10011 /* K1GPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* K1GPacket.swift */; };
+		A10012 /* TripperDashClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* TripperDashClient.swift */; };
+		A10013 /* TripperPodClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013 /* TripperPodClient.swift */; };
+		A10014 /* CircularGauge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* CircularGauge.swift */; };
+		A10015 /* CockpitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015 /* CockpitView.swift */; };
+		A10016 /* AddServiceLogSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016 /* AddServiceLogSheet.swift */; };
+		A10017 /* GarageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017 /* GarageView.swift */; };
+		A10018 /* AddExpenseSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018 /* AddExpenseSheet.swift */; };
+		A10019 /* ExpensesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019 /* ExpensesView.swift */; };
+		A10020 /* RoutePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* RoutePreviewView.swift */; };
+		A10021 /* RidesHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* RidesHistoryView.swift */; };
+		A10022 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* SettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10001 /* TripperDashApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperDashApp.swift; sourceTree = "<group>"; };
+		B10002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		B10003 /* MinimalTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalTheme.swift; sourceTree = "<group>"; };
+		B10004 /* LocationTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationTracker.swift; sourceTree = "<group>"; };
+		B10005 /* PolylineDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolylineDecoder.swift; sourceTree = "<group>"; };
+		B10006 /* RouteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteService.swift; sourceTree = "<group>"; };
+		B10007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		B10008 /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseService.swift; sourceTree = "<group>"; };
+		B10009 /* VehicleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleStore.swift; sourceTree = "<group>"; };
+		B10010 /* FirebaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseManager.swift; sourceTree = "<group>"; };
+		B10011 /* K1GPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = K1GPacket.swift; sourceTree = "<group>"; };
+		B10012 /* TripperDashClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperDashClient.swift; sourceTree = "<group>"; };
+		B10013 /* TripperPodClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperPodClient.swift; sourceTree = "<group>"; };
+		B10014 /* CircularGauge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircularGauge.swift; sourceTree = "<group>"; };
+		B10015 /* CockpitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitView.swift; sourceTree = "<group>"; };
+		B10016 /* AddServiceLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddServiceLogSheet.swift; sourceTree = "<group>"; };
+		B10017 /* GarageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarageView.swift; sourceTree = "<group>"; };
+		B10018 /* AddExpenseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddExpenseSheet.swift; sourceTree = "<group>"; };
+		B10019 /* ExpensesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesView.swift; sourceTree = "<group>"; };
+		B10020 /* RoutePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutePreviewView.swift; sourceTree = "<group>"; };
+		B10021 /* RidesHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RidesHistoryView.swift; sourceTree = "<group>"; };
+		B10022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D10001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E10000 = {
+			isa = PBXGroup;
+			children = (
+				E10001 /* TripperDash */,
+				E10009 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E10001 /* TripperDash */ = {
+			isa = PBXGroup;
+			children = (
+				B10000 /* Info.plist */,
+				E10002 /* App */,
+				E10003 /* Core */,
+				E10004 /* Data */,
+				E10005 /* DashProtocol */,
+				E10006 /* Features */,
+			);
+			path = TripperDash;
+			sourceTree = "<group>";
+		};
+		E10002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B10001 /* TripperDashApp.swift */,
+				B10002 /* AppState.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		E10003 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				B10003 /* MinimalTheme.swift */,
+				B10004 /* LocationTracker.swift */,
+				B10005 /* PolylineDecoder.swift */,
+				B10006 /* RouteService.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		E10004 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				B10007 /* Models.swift */,
+				B10008 /* DatabaseService.swift */,
+				B10009 /* VehicleStore.swift */,
+				B10010 /* FirebaseManager.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
+		E10005 /* DashProtocol */ = {
+			isa = PBXGroup;
+			children = (
+				B10011 /* K1GPacket.swift */,
+				B10012 /* TripperDashClient.swift */,
+				B10013 /* TripperPodClient.swift */,
+			);
+			path = DashProtocol;
+			sourceTree = "<group>";
+		};
+		E10006 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				B10014 /* CircularGauge.swift */,
+				B10015 /* CockpitView.swift */,
+				B10016 /* AddServiceLogSheet.swift */,
+				B10017 /* GarageView.swift */,
+				B10018 /* AddExpenseSheet.swift */,
+				B10019 /* ExpensesView.swift */,
+				B10020 /* RoutePreviewView.swift */,
+				B10021 /* RidesHistoryView.swift */,
+				B10022 /* SettingsView.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		E10009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C10001 /* TripperDash.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F10001 /* TripperDash */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = G10002 /* Build configuration list for PBXNativeTarget "TripperDash" */;
+			buildPhases = (
+				H10001 /* Sources */,
+				D10001 /* Frameworks */,
+				I10001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TripperDash;
+			productName = TripperDash;
+			productReference = C10001 /* TripperDash.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		J10001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					F10001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = G10001 /* Build configuration list for PBXProject "TripperDash" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E10000;
+			productRefGroup = E10009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F10001 /* TripperDash */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		I10001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		H10001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10001 /* TripperDashApp.swift in Sources */,
+				A10002 /* AppState.swift in Sources */,
+				A10003 /* MinimalTheme.swift in Sources */,
+				A10004 /* LocationTracker.swift in Sources */,
+				A10005 /* PolylineDecoder.swift in Sources */,
+				A10006 /* RouteService.swift in Sources */,
+				A10007 /* Models.swift in Sources */,
+				A10008 /* DatabaseService.swift in Sources */,
+				A10009 /* VehicleStore.swift in Sources */,
+				A10010 /* FirebaseManager.swift in Sources */,
+				A10011 /* K1GPacket.swift in Sources */,
+				A10012 /* TripperDashClient.swift in Sources */,
+				A10013 /* TripperPodClient.swift in Sources */,
+				A10014 /* CircularGauge.swift in Sources */,
+				A10015 /* CockpitView.swift in Sources */,
+				A10016 /* AddServiceLogSheet.swift in Sources */,
+				A10017 /* GarageView.swift in Sources */,
+				A10018 /* AddExpenseSheet.swift in Sources */,
+				A10019 /* ExpensesView.swift in Sources */,
+				A10020 /* RoutePreviewView.swift in Sources */,
+				A10021 /* RidesHistoryView.swift in Sources */,
+				A10022 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		K10001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		K10002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		K10003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TripperDash/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.opendash.tripperdash;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Debug;
+		};
+		K10004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TripperDash/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.opendash.tripperdash;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		G10001 /* Build configuration list for PBXProject "TripperDash" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K10001 /* Debug */,
+				K10002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		G10002 /* Build configuration list for PBXNativeTarget "TripperDash" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K10003 /* Debug */,
+				K10004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = J10001 /* Project object */;
+}

@@ -71,6 +71,7 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         #endif
         
         isRecordingRide = true
+        BackgroundKeepAliveService.shared.startKeepAlive()
         recordedDistanceMeters = 0.0
         maxSpeedKmh = 0.0
         rideDurationSeconds = 0

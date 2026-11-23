@@ -56,6 +56,7 @@ public final class TripperPodClient: NSObject, CBCentralManagerDelegate, CBPerip
         writeCharacteristic = nil
         isConnected = false
         statusMessage = "Disconnected"
+        BackgroundKeepAliveService.shared.stopKeepAlive()
     }
     
     // MARK: - Send 20-byte Turn Instruction to Pod
@@ -108,6 +109,7 @@ public final class TripperPodClient: NSObject, CBCentralManagerDelegate, CBPerip
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         isConnected = true
         statusMessage = "Connected to \(peripheral.name ?? "Tripper")"
+        BackgroundKeepAliveService.shared.startKeepAlive()
         peripheral.discoverServices([Self.serviceUUID])
     }
     

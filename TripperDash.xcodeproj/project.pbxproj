@@ -29,6 +29,7 @@
 		A10020 /* RoutePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020 /* RoutePreviewView.swift */; };
 		A10021 /* RidesHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* RidesHistoryView.swift */; };
 		A10022 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* SettingsView.swift */; };
+		A10023 /* BackgroundKeepAliveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* BackgroundKeepAliveService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +57,7 @@
 		B10020 /* RoutePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutePreviewView.swift; sourceTree = "<group>"; };
 		B10021 /* RidesHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RidesHistoryView.swift; sourceTree = "<group>"; };
 		B10022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10023 /* BackgroundKeepAliveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BackgroundKeepAliveService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -106,6 +108,7 @@
 				B10004 /* LocationTracker.swift */,
 				B10005 /* PolylineDecoder.swift */,
 				B10006 /* RouteService.swift */,
+				B10023 /* BackgroundKeepAliveService.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -245,6 +248,7 @@
 				A10020 /* RoutePreviewView.swift in Sources */,
 				A10021 /* RidesHistoryView.swift in Sources */,
 				A10022 /* SettingsView.swift in Sources */,
+				A10023 /* BackgroundKeepAliveService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -20,8 +20,9 @@ public final class TripperDashClient: @unchecked Sendable {
     public var controlPort: UInt16 = 2002
     
     private var connection: NWConnection?
-    private var heartbeatTimer: Timer?
-    private let queue = DispatchQueue(label: "com.tripperdash.network", qos: .userInitiated)
+    private var heartbeatSource: DispatchSourceTimer?
+    private let queue = DispatchQueue(label: "com.tripperdash.network", qos: .userInteractive)
+    private let heartbeatQueue = DispatchQueue(label: "com.tripperdash.heartbeat", qos: .userInteractive)
     
     private init() {}
     
@@ -45,13 +46,17 @@ public final class TripperDashClient: @unchecked Sendable {
                 switch state {
                 case .ready:
                     self.connectionState = .connected
+                    // Keep background socket and CPU awake even when phone display turns off
+                    BackgroundKeepAliveService.shared.startKeepAlive()
                     self.startHeartbeat()
                     self.startReceiving()
                 case .failed(let error):
                     print("Dash connection failed: \(error)")
                     self.connectionState = .failed
+                    BackgroundKeepAliveService.shared.stopKeepAlive()
                 case .cancelled:
                     self.connectionState = .disconnected
+                    BackgroundKeepAliveService.shared.stopKeepAlive()
                 default:
                     break
                 }
@@ -62,21 +67,29 @@ public final class TripperDashClient: @unchecked Sendable {
     }
     
     public func disconnect() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        stopHeartbeat()
         connection?.cancel()
         connection = nil
         connectionState = .disconnected
+        BackgroundKeepAliveService.shared.stopKeepAlive()
     }
     
-    // MARK: - Keep-Alive Heartbeat
+    // MARK: - Keep-Alive Heartbeat (DispatchSourceTimer ensures execution with screen locked)
     private func startHeartbeat() {
-        heartbeatTimer?.invalidate()
-        DispatchQueue.main.async {
-            self.heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.sendHeartbeat()
-            }
+        stopHeartbeat()
+        
+        let source = DispatchSource.makeTimerSource(flags: .strict, queue: heartbeatQueue)
+        source.schedule(deadline: .now(), repeating: .milliseconds(1000), leeway: .milliseconds(50))
+        source.setEventHandler { [weak self] in
+            self?.sendHeartbeat()
         }
+        source.resume()
+        self.heartbeatSource = source
+    }
+    
+    private func stopHeartbeat() {
+        heartbeatSource?.cancel()
+        heartbeatSource = nil
     }
     
     private func sendHeartbeat() {

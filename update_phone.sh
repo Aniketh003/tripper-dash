@@ -4,7 +4,7 @@ set -e
 export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
 echo "🔍 Checking for connected iPhone..."
-DEVICE_ID=$(xcrun devicectl list devices 2>/dev/null | grep "physical" | awk '{print $3}')
+DEVICE_ID=$(xcrun devicectl list devices 2>/dev/null | grep "physical" | grep -oE '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}' | head -n 1)
 
 if [ -z "$DEVICE_ID" ]; then
     DEVICE_ID="00008150-00154999228A401C"

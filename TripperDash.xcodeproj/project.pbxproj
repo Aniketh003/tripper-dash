@@ -38,6 +38,7 @@
 		A10029 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029 /* WeatherService.swift */; };
 		A10030 /* TFTProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* TFTProjectionService.swift */; };
 		A10031 /* SpotifyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031 /* SpotifyService.swift */; };
+		A10032 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10032 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +74,7 @@
 		B10029 /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/WeatherService.swift; sourceTree = "<group>"; };
 		B10030 /* TFTProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/TFTProjectionService.swift; sourceTree = "<group>"; };
 		B10031 /* SpotifyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SpotifyService.swift; sourceTree = "<group>"; };
+		B10032 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -99,6 +101,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000 /* Info.plist */,
+				B10032 /* Assets.xcassets */,
 				E10002 /* App */,
 				E10003 /* Core */,
 				E10004 /* Data */,
@@ -240,6 +243,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10032 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

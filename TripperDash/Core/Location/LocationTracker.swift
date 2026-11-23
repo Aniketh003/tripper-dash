@@ -40,7 +40,9 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         locationManager.distanceFilter = 5.0
         locationManager.activityType = .automotiveNavigation
         locationManager.pausesLocationUpdatesAutomatically = false
+        #if os(iOS)
         locationManager.showsBackgroundLocationIndicator = true
+        #endif
     }
     
     public func requestPermissions() {
@@ -50,13 +52,17 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
     
     public func startLiveTracking() {
         locationManager.startUpdatingLocation()
+        #if os(iOS)
         locationManager.startUpdatingHeading()
+        #endif
     }
     
     public func stopLiveTracking() {
         if !isRecordingRide {
             locationManager.stopUpdatingLocation()
+            #if os(iOS)
             locationManager.stopUpdatingHeading()
+            #endif
         }
     }
     

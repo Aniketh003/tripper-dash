@@ -20,7 +20,7 @@ let package = Package(
             path: "TripperDash",
             exclude: [
                 "Info.plist",
-                "Data/Sync/GoogleService-Info.plist.template"
+                "Data/Sync/GoogleService-Info.plist"
             ]
         )
     ]

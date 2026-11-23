@@ -37,9 +37,15 @@ public struct RoutePreviewView: View {
                                         .foregroundColor(.white)
                                     
                                     Button(action: {
+                                        #if os(iOS)
                                         if let clipboard = UIPasteboard.general.string {
                                             inputDestination = clipboard
                                         }
+                                        #elseif os(macOS)
+                                        if let clipboard = NSPasteboard.general.string(forType: .string) {
+                                            inputDestination = clipboard
+                                        }
+                                        #endif
                                     }) {
                                         Text("Paste")
                                             .font(.system(size: 12, weight: .semibold, design: .rounded))

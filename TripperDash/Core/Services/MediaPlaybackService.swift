@@ -1,5 +1,7 @@
 import Foundation
+#if os(iOS)
 import MediaPlayer
+#endif
 
 @Observable
 public final class MediaPlaybackService: @unchecked Sendable {
@@ -9,13 +11,18 @@ public final class MediaPlaybackService: @unchecked Sendable {
     public var currentArtist: String = "Idle"
     public var isPlaying: Bool = false
     
+    #if os(iOS)
     private let player = MPMusicPlayerController.systemMusicPlayer
+    #endif
     
     private init() {
+        #if os(iOS)
         setupObservers()
         updateCurrentTrack()
+        #endif
     }
     
+    #if os(iOS)
     private func setupObservers() {
         player.beginGeneratingPlaybackNotifications()
         
@@ -35,8 +42,10 @@ public final class MediaPlaybackService: @unchecked Sendable {
             self?.updatePlaybackState()
         }
     }
+    #endif
     
     public func updateCurrentTrack() {
+        #if os(iOS)
         if let item = player.nowPlayingItem {
             currentTitle = item.title ?? "Unknown Title"
             currentArtist = item.artist ?? "Unknown Artist"
@@ -52,15 +61,19 @@ public final class MediaPlaybackService: @unchecked Sendable {
             artist: currentArtist,
             isPlaying: isPlaying
         )
+        #endif
     }
     
+    #if os(iOS)
     private func updatePlaybackState() {
         isPlaying = (player.playbackState == .playing)
     }
+    #endif
     
     // MARK: - Playback Controls (Can be driven by phone UI or bike handlebar joystick)
     
     public func togglePlayPause() {
+        #if os(iOS)
         if player.playbackState == .playing {
             player.pause()
             isPlaying = false
@@ -68,6 +81,10 @@ public final class MediaPlaybackService: @unchecked Sendable {
             player.play()
             isPlaying = true
         }
+        #else
+        isPlaying.toggle()
+        #endif
+        
         TripperDashClient.shared.sendMusicUpdate(
             title: currentTitle,
             artist: currentArtist,
@@ -76,12 +93,16 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
     
     public func nextTrack() {
+        #if os(iOS)
         player.skipToNextItem()
         updateCurrentTrack()
+        #endif
     }
     
     public func previousTrack() {
+        #if os(iOS)
         player.skipToPreviousItem()
         updateCurrentTrack()
+        #endif
     }
 }

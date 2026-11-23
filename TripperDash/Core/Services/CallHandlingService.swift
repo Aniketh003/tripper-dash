@@ -1,9 +1,11 @@
 import Foundation
+#if os(iOS)
 import CallKit
 import AVFoundation
+#endif
 
 @Observable
-public final class CallHandlingService: NSObject, CXCallObserverDelegate, @unchecked Sendable {
+public final class CallHandlingService: NSObject, @unchecked Sendable {
     public static let shared = CallHandlingService()
     
     public var isRinging: Bool = false
@@ -12,19 +14,96 @@ public final class CallHandlingService: NSObject, CXCallObserverDelegate, @unche
     public var callDurationSeconds: UInt32 = 0
     public var activeAudioDeviceName: String = "iPhone"
     
+    #if os(iOS)
     private let callObserver = CXCallObserver()
     private let callController = CXCallController()
     private var activeCallUUID: UUID?
     private var callTimer: Timer?
+    #endif
     
     private override init() {
         super.init()
+        #if os(iOS)
         callObserver.setDelegate(self, queue: .main)
         detectConnectedAudioDevice()
+        #endif
     }
     
-    // MARK: - CXCallObserverDelegate
+    #if os(iOS)
+    private func startCallTimer() {
+        callTimer?.invalidate()
+        callDurationSeconds = 0
+        callTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.isOngoing else { return }
+            self.callDurationSeconds += 1
+            TripperDashClient.shared.sendCallAlert(
+                callerName: self.callerName,
+                isRinging: false,
+                isOngoing: true,
+                durationSeconds: self.callDurationSeconds
+            )
+        }
+    }
+    #endif
     
+    // MARK: - Handlebar & In-App Call Actions
+    
+    public func endOrRejectCall() {
+        #if os(iOS)
+        guard let uuid = activeCallUUID else { return }
+        let endAction = CXEndCallAction(call: uuid)
+        let transaction = CXTransaction(action: endAction)
+        
+        callController.request(transaction) { error in
+            if let error = error {
+                print("Failed to end call: \(error)")
+            }
+        }
+        #else
+        isRinging = false
+        isOngoing = false
+        #endif
+    }
+    
+    public func answerCall() {
+        #if os(iOS)
+        guard let uuid = activeCallUUID else { return }
+        let answerAction = CXAnswerCallAction(call: uuid)
+        let transaction = CXTransaction(action: answerAction)
+        
+        callController.request(transaction) { [weak self] error in
+            if error == nil {
+                self?.isRinging = false
+                self?.isOngoing = true
+                self?.detectConnectedAudioDevice()
+            }
+        }
+        #else
+        isRinging = false
+        isOngoing = true
+        #endif
+    }
+    
+    // MARK: - Bluetooth Headset / Earphones Audio Route Detection
+    
+    public func detectConnectedAudioDevice() {
+        #if os(iOS)
+        let currentRoute = AVAudioSession.sharedInstance().currentRoute
+        for output in currentRoute.outputs {
+            if output.portType == .bluetoothHFP || output.portType == .bluetoothA2DP || output.portType == .bluetoothLE {
+                activeAudioDeviceName = output.portName // e.g. "Cardo Packtalk", "Sena 50S", "AirPods Pro"
+                return
+            }
+        }
+        activeAudioDeviceName = "Phone Speaker / Earpiece"
+        #else
+        activeAudioDeviceName = "Mac Speaker / Headphones"
+        #endif
+    }
+}
+
+#if os(iOS)
+extension CallHandlingService: CXCallObserverDelegate {
     public func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
         activeCallUUID = call.uuid
         
@@ -70,60 +149,5 @@ public final class CallHandlingService: NSObject, CXCallObserverDelegate, @unche
             )
         }
     }
-    
-    private func startCallTimer() {
-        callTimer?.invalidate()
-        callDurationSeconds = 0
-        callTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.isOngoing else { return }
-            self.callDurationSeconds += 1
-            TripperDashClient.shared.sendCallAlert(
-                callerName: self.callerName,
-                isRinging: false,
-                isOngoing: true,
-                durationSeconds: self.callDurationSeconds
-            )
-        }
-    }
-    
-    // MARK: - Handlebar & In-App Call Actions
-    
-    public func endOrRejectCall() {
-        guard let uuid = activeCallUUID else { return }
-        let endAction = CXEndCallAction(call: uuid)
-        let transaction = CXTransaction(action: endAction)
-        
-        callController.request(transaction) { error in
-            if let error = error {
-                print("Failed to end call: \(error)")
-            }
-        }
-    }
-    
-    public func answerCall() {
-        guard let uuid = activeCallUUID else { return }
-        let answerAction = CXAnswerCallAction(call: uuid)
-        let transaction = CXTransaction(action: answerAction)
-        
-        callController.request(transaction) { [weak self] error in
-            if error == nil {
-                self?.isRinging = false
-                self?.isOngoing = true
-                self?.detectConnectedAudioDevice()
-            }
-        }
-    }
-    
-    // MARK: - Bluetooth Headset / Earphones Audio Route Detection
-    
-    public func detectConnectedAudioDevice() {
-        let currentRoute = AVAudioSession.sharedInstance().currentRoute
-        for output in currentRoute.outputs {
-            if output.portType == .bluetoothHFP || output.portType == .bluetoothA2DP || output.portType == .bluetoothLE {
-                activeAudioDeviceName = output.portName // e.g. "Cardo Packtalk", "Sena 50S", "AirPods Pro"
-                return
-            }
-        }
-        activeAudioDeviceName = "Phone Speaker / Earpiece"
-    }
 }
+#endif

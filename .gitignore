@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+*/.DS_Store
+
+# Xcode & SwiftPM
+build/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserdata
+*.xcscmblueprint
+project.xcworkspace/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Personal credentials
+TripperDash/Data/Sync/GoogleService-Info.plist

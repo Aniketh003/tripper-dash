@@ -174,6 +174,7 @@ extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }
 
+#if os(iOS)
 public struct ShareSheet: UIViewControllerRepresentable {
     public let items: [Any]
     
@@ -183,3 +184,20 @@ public struct ShareSheet: UIViewControllerRepresentable {
     
     public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+#else
+public struct ShareSheet: View {
+    public let items: [Any]
+    public var body: some View {
+        VStack(spacing: 12) {
+            Text("CSV Export Saved")
+                .font(.headline)
+            if let url = items.first as? URL {
+                Text(url.lastPathComponent)
+                    .font(.caption)
+                    .foregroundColor(AppTheme.textSecondary)
+            }
+        }
+        .padding(24)
+    }
+}
+#endif

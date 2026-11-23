@@ -164,6 +164,8 @@ public struct RideDetailView: View {
             }
         }
         .navigationTitle(ride.startDate.formatted(date: .abbreviated, time: .omitted))
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 }

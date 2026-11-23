@@ -128,7 +128,9 @@ public struct AddServiceLogSheet: View {
                 }
             }
             .navigationTitle("Log Service")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

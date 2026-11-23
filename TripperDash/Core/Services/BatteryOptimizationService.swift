@@ -1,6 +1,8 @@
 import Foundation
 import CoreLocation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 @Observable
 public final class BatteryOptimizationService: @unchecked Sendable {
@@ -14,13 +16,16 @@ public final class BatteryOptimizationService: @unchecked Sendable {
     private let stationaryThresholdSeconds = 20
     
     private init() {
+        #if canImport(UIKit)
         UIDevice.current.isBatteryMonitoringEnabled = true
         batteryLevelPercent = Int(max(0, UIDevice.current.batteryLevel * 100))
+        #endif
         
         setupLifecycleObservers()
     }
     
     private func setupLifecycleObservers() {
+        #if canImport(UIKit)
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -45,6 +50,7 @@ public final class BatteryOptimizationService: @unchecked Sendable {
         ) { [weak self] _ in
             self?.batteryLevelPercent = Int(max(0, UIDevice.current.batteryLevel * 100))
         }
+        #endif
     }
     
     // MARK: - Adaptive GPS Power Management

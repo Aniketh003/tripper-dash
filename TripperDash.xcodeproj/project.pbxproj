@@ -38,36 +38,36 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10001 /* TripperDashApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperDashApp.swift; sourceTree = "<group>"; };
 		B10002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		B10003 /* MinimalTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalTheme.swift; sourceTree = "<group>"; };
-		B10004 /* LocationTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationTracker.swift; sourceTree = "<group>"; };
-		B10005 /* PolylineDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolylineDecoder.swift; sourceTree = "<group>"; };
-		B10006 /* RouteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteService.swift; sourceTree = "<group>"; };
-		B10007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		B10008 /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseService.swift; sourceTree = "<group>"; };
-		B10009 /* VehicleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleStore.swift; sourceTree = "<group>"; };
-		B10010 /* FirebaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseManager.swift; sourceTree = "<group>"; };
-		B10011 /* K1GPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = K1GPacket.swift; sourceTree = "<group>"; };
-		B10012 /* TripperDashClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperDashClient.swift; sourceTree = "<group>"; };
-		B10013 /* TripperPodClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperPodClient.swift; sourceTree = "<group>"; };
-		B10014 /* CircularGauge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircularGauge.swift; sourceTree = "<group>"; };
-		B10015 /* CockpitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitView.swift; sourceTree = "<group>"; };
-		B10016 /* AddServiceLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddServiceLogSheet.swift; sourceTree = "<group>"; };
-		B10017 /* GarageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarageView.swift; sourceTree = "<group>"; };
-		B10018 /* AddExpenseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddExpenseSheet.swift; sourceTree = "<group>"; };
-		B10019 /* ExpensesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesView.swift; sourceTree = "<group>"; };
-		B10020 /* RoutePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutePreviewView.swift; sourceTree = "<group>"; };
-		B10021 /* RidesHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RidesHistoryView.swift; sourceTree = "<group>"; };
-		B10022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10003 /* MinimalTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme/MinimalTheme.swift; sourceTree = "<group>"; };
+		B10004 /* LocationTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Location/LocationTracker.swift; sourceTree = "<group>"; };
+		B10005 /* PolylineDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Network/PolylineDecoder.swift; sourceTree = "<group>"; };
+		B10006 /* RouteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Network/RouteService.swift; sourceTree = "<group>"; };
+		B10007 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Models.swift; sourceTree = "<group>"; };
+		B10008 /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence/DatabaseService.swift; sourceTree = "<group>"; };
+		B10009 /* VehicleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence/VehicleStore.swift; sourceTree = "<group>"; };
+		B10010 /* FirebaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sync/FirebaseManager.swift; sourceTree = "<group>"; };
+		B10011 /* K1GPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/K1GPacket.swift; sourceTree = "<group>"; };
+		B10012 /* TripperDashClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/TripperDashClient.swift; sourceTree = "<group>"; };
+		B10013 /* TripperPodClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripperPod/TripperPodClient.swift; sourceTree = "<group>"; };
+		B10014 /* CircularGauge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cockpit/CircularGauge.swift; sourceTree = "<group>"; };
+		B10015 /* CockpitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cockpit/CockpitView.swift; sourceTree = "<group>"; };
+		B10016 /* AddServiceLogSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Garage/AddServiceLogSheet.swift; sourceTree = "<group>"; };
+		B10017 /* GarageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Garage/GarageView.swift; sourceTree = "<group>"; };
+		B10018 /* AddExpenseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Expenses/AddExpenseSheet.swift; sourceTree = "<group>"; };
+		B10019 /* ExpensesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Expenses/ExpensesView.swift; sourceTree = "<group>"; };
+		B10020 /* RoutePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Routes/RoutePreviewView.swift; sourceTree = "<group>"; };
+		B10021 /* RidesHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rides/RidesHistoryView.swift; sourceTree = "<group>"; };
+		B10022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings/SettingsView.swift; sourceTree = "<group>"; };
 		B10023 /* BackgroundKeepAliveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BackgroundKeepAliveService.swift; sourceTree = "<group>"; };
 		B10024 /* MediaPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaPlaybackService.swift; sourceTree = "<group>"; };
 		B10025 /* CallHandlingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CallHandlingService.swift; sourceTree = "<group>"; };
 		B10026 /* BatteryOptimizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BatteryOptimizationService.swift; sourceTree = "<group>"; };
-		B10027 /* DashAuthCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashProtocol/TFTDash/DashAuthCrypto.swift; sourceTree = "<group>"; };
-		B10028 /* DashK1GProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashProtocol/TFTDash/DashK1GProtocol.swift; sourceTree = "<group>"; };
+		B10027 /* DashAuthCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/DashAuthCrypto.swift; sourceTree = "<group>"; };
+		B10028 /* DashK1GProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/DashK1GProtocol.swift; sourceTree = "<group>"; };
+		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -299,6 +299,9 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -322,6 +325,9 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -335,6 +341,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6Q58Q9XR94;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TripperDash/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -342,10 +349,13 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.opendash.tripperdash;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aniketh.tripperdash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -355,6 +365,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6Q58Q9XR94;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TripperDash/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -362,10 +373,13 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.opendash.tripperdash;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aniketh.tripperdash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -391,7 +405,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = J10001 /* Project object */;
 }

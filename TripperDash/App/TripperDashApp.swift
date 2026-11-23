@@ -5,6 +5,7 @@ struct TripperDashApp: App {
     @State private var appState = AppState()
     
     init() {
+        #if os(iOS)
         // Configure dark OLED navigation and tab bar appearance
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
@@ -19,6 +20,7 @@ struct TripperDashApp: App {
         navAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         UINavigationBar.appearance().standardAppearance = navAppearance
         UINavigationBar.appearance().scrollEdgeAppearance = navAppearance
+        #endif
     }
     
     var body: some Scene {

@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// Manages background execution preservation to guarantee that the Wi-Fi UDP socket
 /// to the motorcycle's TFT Dash and the CoreBluetooth link to the Tripper Pod remain
@@ -9,7 +11,9 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
     public static let shared = BackgroundKeepAliveService()
     
     private var audioPlayer: AVAudioPlayer?
+    #if canImport(UIKit)
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    #endif
     private var isKeepAliveActive: Bool = false
     
     private init() {
@@ -18,6 +22,7 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
     }
     
     private func setupAudioSession() {
+        #if os(iOS)
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .voicePrompt, options: [.mixWithOthers, .duckOthers])
@@ -25,9 +30,11 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
         } catch {
             print("BackgroundKeepAliveService audio session error: \(error)")
         }
+        #endif
     }
     
     private func setupLifecycleObservers() {
+        #if canImport(UIKit)
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -43,6 +50,7 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
         ) { [weak self] _ in
             self?.handleWillEnterForeground()
         }
+        #endif
     }
     
     // MARK: - Keep-Alive Activation
@@ -80,10 +88,12 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
     private func handleDidEnterBackground() {
         guard isKeepAliveActive else { return }
         
+        #if canImport(UIKit)
         // Request background execution assertion from iOS
         backgroundTaskIdentifier = UIApplication.shared.beginBackgroundTask(withName: "TripperDashSocketKeepAlive") { [weak self] in
             self?.endBackgroundTask()
         }
+        #endif
     }
     
     private func handleWillEnterForeground() {
@@ -91,10 +101,12 @@ public final class BackgroundKeepAliveService: @unchecked Sendable {
     }
     
     private func endBackgroundTask() {
+        #if canImport(UIKit)
         if backgroundTaskIdentifier != .invalid {
             UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
             backgroundTaskIdentifier = .invalid
         }
+        #endif
     }
     
     // MARK: - In-Memory Silent WAV Generator (Zero external assets needed)

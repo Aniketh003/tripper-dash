@@ -136,8 +136,10 @@ public struct MinimalButton: View {
     
     public var body: some View {
         Button(action: {
+            #if os(iOS)
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
+            #endif
             action()
         }) {
             HStack(spacing: 8) {
@@ -160,3 +162,45 @@ public struct MinimalButton: View {
         }
     }
 }
+
+// MARK: - Cross-Platform Compatibility Shims for macOS Preview / Building
+#if !os(iOS)
+public enum UIKeyboardType {
+    case decimalPad
+    case numberPad
+    case `default`
+    case emailAddress
+}
+
+public struct NavigationBarItemTitleDisplayModeShim {
+    public static let inline = NavigationBarItemTitleDisplayModeShim()
+    public static let large = NavigationBarItemTitleDisplayModeShim()
+    public static let automatic = NavigationBarItemTitleDisplayModeShim()
+}
+
+public final class UINotificationFeedbackGenerator {
+    public enum FeedbackType { case success, warning, error }
+    public init() {}
+    public func notificationOccurred(_ notificationType: FeedbackType) {}
+}
+
+public final class UIImpactFeedbackGenerator {
+    public enum FeedbackStyle { case light, medium, heavy, soft, rigid }
+    public init(style: FeedbackStyle) {}
+    public func impactOccurred() {}
+}
+
+extension View {
+    public func keyboardType(_ type: UIKeyboardType) -> some View {
+        self
+    }
+    
+    public func navigationBarTitleDisplayMode(_ mode: NavigationBarItemTitleDisplayModeShim) -> some View {
+        self
+    }
+    
+    public func navigationBarHidden(_ hidden: Bool) -> some View {
+        self
+    }
+}
+#endif

@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
 
 public struct CockpitView: View {
     @Bindable var tracker: LocationTracker
@@ -13,6 +16,9 @@ public struct CockpitView: View {
     @Bindable var projection: TFTProjectionService = TFTProjectionService.shared
     
     @State private var showingSpotifySheet = false
+    #if canImport(PhotosUI)
+    @State private var cockpitWallpaperItem: PhotosPickerItem? = nil
+    #endif
     let onRideSaved: (RideRecord) -> Void
     
     public init(
@@ -160,14 +166,39 @@ public struct CockpitView: View {
                             .frame(width: 526 * 0.64, height: 300 * 0.64)
                             .shadow(color: .black.opacity(0.6), radius: 20, y: 6)
                             
-                            HStack(spacing: 8) {
-                                Text(projection.isStreaming ? "Streaming live to Bike TFT · \(String(format: "%.1f", projection.currentFPS)) fps" : "Bike TFT Digital Homescreen Preview")
+                            HStack(spacing: 10) {
+                                Text(projection.isStreaming ? "Streaming to TFT · \(String(format: "%.1f", projection.currentFPS)) fps" : "Guerrilla 450 TFT Dome")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(projection.isStreaming ? AppTheme.emerald : AppTheme.textTertiary)
                                 
+                                #if canImport(PhotosUI)
+                                PhotosPicker(selection: $cockpitWallpaperItem, matching: .images) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "photo.on.rectangle.angled")
+                                            .font(.system(size: 10, weight: .semibold))
+                                        Text(dashClient.hasCustomWallpaper ? "Wallpaper" : "Add Wallpaper")
+                                            .font(.system(size: 11, weight: .semibold))
+                                    }
+                                    .foregroundColor(AppTheme.accent)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(AppTheme.surfaceElevated)
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .onChange(of: cockpitWallpaperItem) { _, newItem in
+                                    guard let newItem = newItem else { return }
+                                    Task {
+                                        if let data = try? await newItem.loadTransferable(type: Data.self) {
+                                            dashClient.saveCustomWallpaperData(data)
+                                        }
+                                    }
+                                }
+                                #endif
+                                
                                 if dashClient.isNavigationActive {
-                                    Button("Clear Turn-by-Turn") {
-                                        dashClient.stopNavigation()
+                                    Button("End Nav") {
+                                        NavigationEngine.shared.stopNavigation()
                                     }
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundColor(AppTheme.coral)
@@ -372,7 +403,6 @@ public struct CockpitView: View {
                                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 #endif
                                 if let ride = tracker.stopRide() {
-                                    vehicleStore.updateOdometer(km: vehicleStore.activeVehicle.currentOdometer + ride.distanceKm)
                                     onRideSaved(ride)
                                 }
                             }

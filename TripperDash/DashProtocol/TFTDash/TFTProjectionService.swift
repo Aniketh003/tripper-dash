@@ -116,15 +116,10 @@ public struct TFTHomescreenCanvas: View {
         return dirs[Int((heading + 22.5) / 45.0) & 7]
     }
     
-    private let amber = Color(red: 1.0, green: 0.62, blue: 0.04)
-    private let emerald = Color(red: 0.19, green: 0.82, blue: 0.35)
-    
-    public var body: some View {
-        ZStack {
-            // Pure OLED Black fill so the 526×300 frame blends invisibly into the bike's round TFT bezel
-            Color.black
-            
-            // Subtle dome ambient glow centered at (263, 210)
+    @ViewBuilder
+    private func wallpaperBackground(style: TFTWallpaperStyle, dimming: Double) -> some View {
+        switch style {
+        case .pureBlack:
             RadialGradient(
                 colors: [
                     (isCallRinging ? emerald : (isCallOngoing ? amber : Color(red: 0.12, green: 0.14, blue: 0.20))).opacity(0.24),
@@ -134,6 +129,70 @@ public struct TFTHomescreenCanvas: View {
                 startRadius: 12,
                 endRadius: 230
             )
+        case .apexGold:
+            ZStack {
+                LinearGradient(
+                    colors: [Color(red: 0.26, green: 0.18, blue: 0.04), Color(red: 0.06, green: 0.05, blue: 0.03), Color.black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                RadialGradient(
+                    colors: [amber.opacity(0.32), Color.clear],
+                    center: UnitPoint(x: 0.5, y: 0.25),
+                    startRadius: 8,
+                    endRadius: 240
+                )
+                Color.black.opacity(dimming * 0.6)
+            }
+        case .sherpaDusk:
+            ZStack {
+                LinearGradient(
+                    colors: [Color(red: 0.34, green: 0.11, blue: 0.14), Color(red: 0.16, green: 0.08, blue: 0.18), Color.black],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Color.black.opacity(dimming * 0.6)
+            }
+        case .midnightMesh:
+            ZStack {
+                LinearGradient(
+                    colors: [Color(red: 0.05, green: 0.16, blue: 0.32), Color(red: 0.03, green: 0.07, blue: 0.16), Color.black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                Color.black.opacity(dimming * 0.6)
+            }
+        case .customPhoto:
+            ZStack {
+                #if canImport(UIKit)
+                if let uiImg = TFTProjectionService.shared.cachedCustomWallpaperImage {
+                    Image(uiImage: uiImg)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 526, height: 300)
+                        .clipped()
+                } else {
+                    Color.black
+                }
+                #else
+                Color.black
+                #endif
+                Color.black.opacity(dimming)
+            }
+        }
+    }
+    
+    private let amber = Color(red: 1.0, green: 0.62, blue: 0.04)
+    private let emerald = Color(red: 0.19, green: 0.82, blue: 0.35)
+    
+    public var body: some View {
+        let client = TripperDashClient.shared
+        ZStack {
+            // Pure OLED Black base so outer corners blend invisibly into the bike's round TFT bezel
+            Color.black
+            
+            // Wallpaper Layer (Custom Photo or Curated OLED Theme)
+            wallpaperBackground(style: client.wallpaperStyle, dimming: client.wallpaperDimming)
             
             // Content strictly positioned inside the 526×300 upper circular dome (center = 263, 263; radius = 263)
             VStack(spacing: 10) {
@@ -424,10 +483,28 @@ public final class TFTProjectionService: @unchecked Sendable {
     // Cached normalized SPS & PPS for Dash compound IDR bundling
     private var cachedSPS: Data?
     private var cachedPPS: Data?
+    #if canImport(UIKit)
+    public var cachedCustomWallpaperImage: UIImage?
+    #endif
     
     private weak var trackerRef: LocationTracker?
     
-    private init() {}
+    private init() {
+        reloadCustomWallpaperCache()
+    }
+    
+    public func reloadCustomWallpaperCache() {
+        #if canImport(UIKit)
+        let url = TripperDashClient.customWallpaperFileURL
+        if FileManager.default.fileExists(atPath: url.path),
+           let data = try? Data(contentsOf: url),
+           let img = UIImage(data: data) {
+            self.cachedCustomWallpaperImage = img
+        } else {
+            self.cachedCustomWallpaperImage = nil
+        }
+        #endif
+    }
     
     public func attachTracker(_ tracker: LocationTracker) {
         self.trackerRef = tracker
@@ -694,6 +771,65 @@ public final class TFTProjectionService: @unchecked Sendable {
             let amber = UIColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0)
             let emerald = UIColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0)
             let coral = UIColor(red: 1.0, green: 0.27, blue: 0.23, alpha: 1.0)
+            
+            // 1b. Render Custom Photo or Theme Wallpaper inside the 526×300 dome
+            let client = TripperDashClient.shared
+            let style = client.wallpaperStyle
+            let dim = CGFloat(min(0.88, max(0.10, client.wallpaperDimming)))
+            
+            switch style {
+            case .pureBlack:
+                break
+            case .apexGold:
+                let colors = [
+                    UIColor(red: 0.28, green: 0.19, blue: 0.04, alpha: 1.0).cgColor,
+                    UIColor(red: 0.07, green: 0.05, blue: 0.02, alpha: 1.0).cgColor,
+                    UIColor.black.cgColor
+                ] as CFArray
+                if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 0.55, 1.0]) {
+                    cg.drawLinearGradient(grad, start: CGPoint(x: 263, y: 0), end: CGPoint(x: 263, y: 300), options: [])
+                }
+                UIColor.black.withAlphaComponent(dim * 0.5).setFill()
+                cg.fill(rect)
+            case .sherpaDusk:
+                let colors = [
+                    UIColor(red: 0.34, green: 0.11, blue: 0.14, alpha: 1.0).cgColor,
+                    UIColor(red: 0.14, green: 0.07, blue: 0.18, alpha: 1.0).cgColor,
+                    UIColor.black.cgColor
+                ] as CFArray
+                if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 0.6, 1.0]) {
+                    cg.drawLinearGradient(grad, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 526, y: 300), options: [])
+                }
+                UIColor.black.withAlphaComponent(dim * 0.5).setFill()
+                cg.fill(rect)
+            case .midnightMesh:
+                let colors = [
+                    UIColor(red: 0.05, green: 0.16, blue: 0.32, alpha: 1.0).cgColor,
+                    UIColor(red: 0.02, green: 0.07, blue: 0.15, alpha: 1.0).cgColor,
+                    UIColor.black.cgColor
+                ] as CFArray
+                if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 0.6, 1.0]) {
+                    cg.drawLinearGradient(grad, start: CGPoint(x: 263, y: 0), end: CGPoint(x: 263, y: 300), options: [])
+                }
+                UIColor.black.withAlphaComponent(dim * 0.5).setFill()
+                cg.fill(rect)
+            case .customPhoto:
+                if let wpImg = self.cachedCustomWallpaperImage {
+                    let imgSize = wpImg.size
+                    let scale = max(rect.width / max(1, imgSize.width), rect.height / max(1, imgSize.height))
+                    let drawW = imgSize.width * scale
+                    let drawH = imgSize.height * scale
+                    let drawRect = CGRect(
+                        x: (rect.width - drawW) / 2.0,
+                        y: (rect.height - drawH) / 2.0,
+                        width: drawW,
+                        height: drawH
+                    )
+                    wpImg.draw(in: drawRect)
+                    UIColor.black.withAlphaComponent(dim).setFill()
+                    cg.fill(rect)
+                }
+            }
             
             // 2. Top Status Capsule (Clock · Compass · Battery) at y = 32..62
             let fmt = DateFormatter()

@@ -21,20 +21,31 @@ public enum DashConnectionState: Equatable, Sendable {
     }
 }
 
+public enum TFTWallpaperStyle: String, CaseIterable, Sendable {
+    case pureBlack    = "OLED Black"
+    case apexGold     = "Apex Gold"
+    case sherpaDusk   = "Sherpa Dusk"
+    case midnightMesh = "Midnight"
+    case customPhoto  = "Custom Photo"
+}
+
 @Observable
 public final class TripperDashClient: @unchecked Sendable {
     public static let shared = TripperDashClient()
+    public static let defaultBikeSSID = "RE_RLK8_260813"
+    public static let defaultBikeIP = "192.168.1.1"
+    public static let defaultLocalMacIP = "192.168.0.9"
     
     public var connectionState: DashConnectionState = .disconnected
     public var lastJoystickEvent: DashJoystickEvent? = nil
-    public var dashSSID: String = "RE_450_HIMALAYAN"
+    public var dashSSID: String = "RE_RLK8_260813"
     public var dashIP: String = "192.168.1.1"
     public var broadcastIP: String = "192.168.1.255"
     public var bikePort: UInt16 = DashK1GProtocol.bikeListenPort   // 2000
     public var listenPort: UInt16 = DashK1GProtocol.phoneListenPort // 2002
     public var isMockMode: Bool = false
     
-    // TFT Digital Homescreen Preferences (No Speedometer!)
+    // TFT Digital Homescreen Preferences & Wallpaper
     public var showWeatherOnTFT: Bool = true {
         didSet {
             UserDefaults.standard.set(showWeatherOnTFT, forKey: "pref_tft_weather")
@@ -59,6 +70,19 @@ public final class TripperDashClient: @unchecked Sendable {
             }
         }
     }
+    public var wallpaperStyle: TFTWallpaperStyle = .pureBlack {
+        didSet {
+            UserDefaults.standard.set(wallpaperStyle.rawValue, forKey: "pref_tft_wallpaper_style")
+            TFTProjectionService.shared.triggerImmediateFrame()
+        }
+    }
+    public var wallpaperDimming: Double = 0.45 {
+        didSet {
+            UserDefaults.standard.set(wallpaperDimming, forKey: "pref_tft_wallpaper_dim")
+            TFTProjectionService.shared.triggerImmediateFrame()
+        }
+    }
+    public var hasCustomWallpaper: Bool = false
     
     // Active Navigation State (Turn-by-turn bubble is HIDDEN by default when isNavigationActive == false!)
     public var isNavigationActive: Bool = false
@@ -93,8 +117,13 @@ public final class TripperDashClient: @unchecked Sendable {
     private let heartbeatQueue = DispatchQueue(label: "com.tripperdash.heartbeat", qos: .userInteractive)
     
     private init() {
-        if let savedSSID = UserDefaults.standard.string(forKey: "pref_dash_ssid"), !savedSSID.isEmpty {
+        if let savedSSID = UserDefaults.standard.string(forKey: "pref_dash_ssid"),
+           !savedSSID.isEmpty,
+           savedSSID != "RE_450_HIMALAYAN" {
             self.dashSSID = savedSSID
+        } else {
+            self.dashSSID = Self.defaultBikeSSID
+            UserDefaults.standard.set(Self.defaultBikeSSID, forKey: "pref_dash_ssid")
         }
         if let savedIP = UserDefaults.standard.string(forKey: "pref_dash_ip"), !savedIP.isEmpty {
             self.dashIP = savedIP
@@ -108,6 +137,67 @@ public final class TripperDashClient: @unchecked Sendable {
         if UserDefaults.standard.object(forKey: "pref_tft_video") != nil {
             self.enableVideoProjection = UserDefaults.standard.bool(forKey: "pref_tft_video")
         }
+        if let savedStyle = UserDefaults.standard.string(forKey: "pref_tft_wallpaper_style"),
+           let style = TFTWallpaperStyle(rawValue: savedStyle) {
+            self.wallpaperStyle = style
+        }
+        if UserDefaults.standard.object(forKey: "pref_tft_wallpaper_dim") != nil {
+            self.wallpaperDimming = UserDefaults.standard.double(forKey: "pref_tft_wallpaper_dim")
+        }
+        self.hasCustomWallpaper = FileManager.default.fileExists(atPath: Self.customWallpaperFileURL.path)
+    }
+    
+    public static var customWallpaperFileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("tft_custom_wallpaper.jpg")
+    }
+    
+    public func saveCustomWallpaperData(_ data: Data) {
+        do {
+            try data.write(to: Self.customWallpaperFileURL, options: .atomic)
+            DispatchQueue.main.async {
+                self.hasCustomWallpaper = true
+                self.wallpaperStyle = .customPhoto
+                TFTProjectionService.shared.reloadCustomWallpaperCache()
+                TFTProjectionService.shared.triggerImmediateFrame()
+                self.log("🖼️ Saved custom TFT Homescreen wallpaper.")
+            }
+        } catch {
+            log("⚠️ Failed to save wallpaper: \(error.localizedDescription)")
+        }
+    }
+    
+    public func clearCustomWallpaper() {
+        try? FileManager.default.removeItem(at: Self.customWallpaperFileURL)
+        DispatchQueue.main.async {
+            self.hasCustomWallpaper = false
+            if self.wallpaperStyle == .customPhoto {
+                self.wallpaperStyle = .pureBlack
+            }
+            TFTProjectionService.shared.reloadCustomWallpaperCache()
+            TFTProjectionService.shared.triggerImmediateFrame()
+        }
+    }
+    
+    /// Updates broadcast IP automatically whenever dashIP is changed (e.g., 192.168.1.1 -> 192.168.1.255, 192.168.0.9 -> 192.168.0.255)
+    private func updateBroadcastForIP(_ ip: String) {
+        let parts = ip.split(separator: ".")
+        if parts.count == 4 && ip != "127.0.0.1" {
+            self.broadcastIP = "\(parts[0]).\(parts[1]).\(parts[2]).255"
+        } else {
+            self.broadcastIP = "192.168.1.255"
+        }
+    }
+    
+    /// Returns the detected local Wi-Fi subnet host IP or fallback for local testing
+    public func detectedLocalSubnetPrefix() -> String {
+        if let local = getLocalWiFiIP() {
+            let parts = local.split(separator: ".")
+            if parts.count == 4 {
+                return "\(parts[0]).\(parts[1]).\(parts[2])"
+            }
+        }
+        return "192.168.0"
     }
     
     public func setDashSSID(_ newSSID: String) {
@@ -122,8 +212,9 @@ public final class TripperDashClient: @unchecked Sendable {
         let trimmed = newIP.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         self.dashIP = trimmed
+        self.updateBroadcastForIP(trimmed)
         UserDefaults.standard.set(trimmed, forKey: "pref_dash_ip")
-        log("Updated Dash IP to: '\(trimmed)'")
+        log("Updated Dash IP to: '\(trimmed)' (Broadcast: \(self.broadcastIP))")
     }
     
     public func log(_ message: String) {
@@ -364,10 +455,46 @@ public final class TripperDashClient: @unchecked Sendable {
     private func handleIncomingPacket(_ data: Data) {
         let segments = DashK1GProtocol.decodeSegments(data: data)
         for s in segments {
-            if s.type == 0x07 {
+            switch s.type {
+            case 0x07:
                 handleAuthSegment(s)
-            } else if s.type == 0x09 {
+            case 0x09:
                 handleDashCommandOrButton(s)
+            case 0x03:
+                // 0x03: Cluster Settings Sync Request (Clock format / Temp units) -> Reply with live Clock & Weather
+                sendRawPacket(DashK1GProtocol.buildTimeSyncPacket(seq: nextSeq()))
+                sendWeatherUpdate()
+            case 0x0F, 0x0A:
+                // 0x0F (0F01..0F0A) & 0x0A: Cluster Device Info, Firmware & Odometer Telemetry frames
+                handleClusterTelemetrySegment(s)
+            default:
+                break
+            }
+        }
+    }
+    
+    private func handleClusterTelemetrySegment(_ seg: DashK1GProtocol.K1GSegment) {
+        DispatchQueue.main.async {
+            VehicleStore.shared.lastDashSyncDate = Date()
+        }
+        if seg.type == 0x0F {
+            let text = String(data: seg.payload, encoding: .ascii)?
+                .trimmingCharacters(in: .controlCharacters.union(.whitespacesAndNewlines)) ?? ""
+            if !text.isEmpty {
+                log("🏍️ Cluster Info (0F \(String(format: "%02X", seg.sub))): \(text)")
+                DispatchQueue.main.async {
+                    VehicleStore.shared.dashFirmwareVersion = text
+                }
+            }
+        } else if seg.type == 0x0A && seg.payload.count >= 4 {
+            // Check if 4-byte unsigned integer odometer reading (in km or 0.1 km) is reported by cluster
+            let rawVal = (UInt32(seg.payload[0]) << 24) | (UInt32(seg.payload[1]) << 16) | (UInt32(seg.payload[2]) << 8) | UInt32(seg.payload[3])
+            if rawVal > 10 && rawVal < 500_000 {
+                let km = Double(rawVal)
+                if km >= VehicleStore.shared.activeVehicle.currentOdometer {
+                    VehicleStore.shared.updateOdometer(km: km)
+                    log("🏍️ Cluster Odometer Synced: \(String(format: "%.0f", km)) km")
+                }
             }
         }
     }

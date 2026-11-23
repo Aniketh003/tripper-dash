@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Vehicle Profile
+// MARK: - Vehicle Profile (Default: Royal Enfield Guerrilla 450 — Apex Black)
 public struct VehicleProfile: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -9,15 +9,25 @@ public struct VehicleProfile: Identifiable, Codable, Equatable, Sendable {
     public var insurance: String
     public var service: String
     public var currentOdometer: Double
+    public var engineSpec: String
+    public var powerTorqueSpec: String
+    public var fuelCapacityLiters: Double
+    public var tirePressureFrontRearPSI: String
+    public var dashSSID: String
     
     public init(
         id: String = UUID().uuidString,
-        title: String = "Himalayan 450",
-        nickname: String = "Primary Steed",
+        title: String = "Guerrilla 450",
+        nickname: String = "Apex Black",
         puc: String = "Valid",
         insurance: String = "Valid",
         service: String = "Up to date",
-        currentOdometer: Double = 0.0
+        currentOdometer: Double = 0.0,
+        engineSpec: String = "452 cc Sherpa 450 · Liquid-Cooled DOHC",
+        powerTorqueSpec: String = "40 PS @ 8,000 rpm · 40 Nm @ 5,500 rpm",
+        fuelCapacityLiters: Double = 11.0,
+        tirePressureFrontRearPSI: String = "29 PSI Front · 33 PSI Rear",
+        dashSSID: String = "RE_RLK8_260813"
     ) {
         self.id = id
         self.title = title
@@ -26,6 +36,28 @@ public struct VehicleProfile: Identifiable, Codable, Equatable, Sendable {
         self.insurance = insurance
         self.service = service
         self.currentOdometer = currentOdometer
+        self.engineSpec = engineSpec
+        self.powerTorqueSpec = powerTorqueSpec
+        self.fuelCapacityLiters = fuelCapacityLiters
+        self.tirePressureFrontRearPSI = tirePressureFrontRearPSI
+        self.dashSSID = dashSSID
+    }
+    
+    // Backward-compatible decoder for existing stored profiles
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? c.decode(String.self, forKey: .id)) ?? "default"
+        self.title = (try? c.decode(String.self, forKey: .title)) ?? "Guerrilla 450"
+        self.nickname = (try? c.decode(String.self, forKey: .nickname)) ?? "Apex Black"
+        self.puc = (try? c.decode(String.self, forKey: .puc)) ?? "Valid"
+        self.insurance = (try? c.decode(String.self, forKey: .insurance)) ?? "Valid"
+        self.service = (try? c.decode(String.self, forKey: .service)) ?? "Up to date"
+        self.currentOdometer = (try? c.decode(Double.self, forKey: .currentOdometer)) ?? 0.0
+        self.engineSpec = (try? c.decode(String.self, forKey: .engineSpec)) ?? "452 cc Sherpa 450 · Liquid-Cooled DOHC"
+        self.powerTorqueSpec = (try? c.decode(String.self, forKey: .powerTorqueSpec)) ?? "40 PS @ 8,000 rpm · 40 Nm @ 5,500 rpm"
+        self.fuelCapacityLiters = (try? c.decode(Double.self, forKey: .fuelCapacityLiters)) ?? 11.0
+        self.tirePressureFrontRearPSI = (try? c.decode(String.self, forKey: .tirePressureFrontRearPSI)) ?? "29 PSI Front · 33 PSI Rear"
+        self.dashSSID = (try? c.decode(String.self, forKey: .dashSSID)) ?? "RE_RLK8_260813"
     }
 }
 
@@ -253,6 +285,39 @@ public enum ManeuverType: String, Codable, Sendable {
         case .unknown: return "location.fill"
         }
     }
+    
+    /// Authentic Royal Enfield Tripper Dash K1G Maneuver Icon Byte
+    public var k1gIconCode: UInt8 {
+        switch self {
+        case .straight: return 0x09
+        case .turnSlightRight: return 0x03
+        case .turnRight: return 0x04
+        case .turnSharpRight: return 0x05
+        case .uTurn: return 0x06
+        case .turnSharpLeft: return 0x07
+        case .turnLeft: return 0x08
+        case .turnSlightLeft: return 0x09
+        case .roundabout: return 0x1B
+        case .destination: return 0x3C
+        case .unknown: return 0x09
+        }
+    }
+}
+
+public struct PlaceSearchResult: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let subtitle: String
+    public let latitude: Double
+    public let longitude: Double
+    
+    public init(id: String = UUID().uuidString, title: String, subtitle: String, latitude: Double, longitude: Double) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.latitude = latitude
+        self.longitude = longitude
+    }
 }
 
 public struct RouteStep: Identifiable, Codable, Equatable, Sendable {
@@ -261,17 +326,23 @@ public struct RouteStep: Identifiable, Codable, Equatable, Sendable {
     public var distanceMeters: Double
     public var maneuver: ManeuverType
     public var streetName: String
+    public var endLatitude: Double?
+    public var endLongitude: Double?
     
     public init(
         instruction: String,
         distanceMeters: Double,
         maneuver: ManeuverType = .straight,
-        streetName: String = ""
+        streetName: String = "",
+        endLatitude: Double? = nil,
+        endLongitude: Double? = nil
     ) {
         self.instruction = instruction
         self.distanceMeters = distanceMeters
         self.maneuver = maneuver
         self.streetName = streetName
+        self.endLatitude = endLatitude
+        self.endLongitude = endLongitude
     }
 }
 

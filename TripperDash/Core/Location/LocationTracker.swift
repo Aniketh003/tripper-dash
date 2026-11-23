@@ -23,6 +23,7 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
     
     private var rideStartTime: Date?
     private var lastRecordedLocation: CLLocation?
+    private var lastDashConnectedLocation: CLLocation?
     private var timer: Timer?
     
     // Filtering Constants (matched to OpenDash)
@@ -181,6 +182,22 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         // Dynamically throttle GPS polling when stationary to conserve battery
         BatteryOptimizationService.shared.evaluatePowerState(currentSpeedKmh: speedKmh, locationManager: manager)
         
+        // Handle live odometer auto-sync whenever connected to the bike (even if manual Ride Recording isn't active!)
+        let isBikeConnected = (TripperDashClient.shared.connectionState == .connected) || TripperPodClient.shared.isConnected
+        if isBikeConnected && !isRecordingRide {
+            if let lastDashLoc = lastDashConnectedLocation {
+                let stepDist = location.distance(from: lastDashLoc)
+                if stepDist >= minMoveDistanceMeters && speedMps >= stillSpeedMps {
+                    VehicleStore.shared.incrementOdometerLive(deltaMeters: stepDist)
+                    lastDashConnectedLocation = location
+                }
+            } else {
+                lastDashConnectedLocation = location
+            }
+        } else if !isBikeConnected {
+            lastDashConnectedLocation = nil
+        }
+        
         // Handle ride recording accumulation
         if isRecordingRide {
             if let lastLoc = lastRecordedLocation {
@@ -188,6 +205,7 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
                 if stepDistance >= minMoveDistanceMeters {
                     if speedMps >= stillSpeedMps {
                         recordedDistanceMeters += stepDistance
+                        VehicleStore.shared.incrementOdometerLive(deltaMeters: stepDistance)
                     }
                     if speedKmh > maxSpeedKmh {
                         maxSpeedKmh = speedKmh
@@ -200,6 +218,9 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
                 lastRecordedLocation = location
             }
         }
+        
+        // Feed live GPS coordinates to NavigationEngine for real-time turn-by-turn step progression
+        NavigationEngine.shared.updateRiderLocation(location)
     }
     
     public func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {

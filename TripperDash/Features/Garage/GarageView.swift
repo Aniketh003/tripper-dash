@@ -18,15 +18,14 @@ public struct GarageView: View {
     }
     
     private var nextServiceRemainingKm: Double {
-        let current = vehicleStore.activeVehicle.currentOdometer
-        let interval = 5000.0
-        let nextTarget = ceil(max(current + 1, 1) / interval) * interval
-        return max(0, nextTarget - current)
+        vehicleStore.nextServiceRemainingKm
     }
     
     private var serviceProgress: Double {
-        let used = 5000.0 - nextServiceRemainingKm
-        return min(max(used / 5000.0, 0.0), 1.0)
+        let target = vehicleStore.nextServiceTargetKm
+        let cycleSpan = target <= 500.0 ? 500.0 : 5000.0
+        let used = cycleSpan - nextServiceRemainingKm
+        return min(max(used / cycleSpan, 0.0), 1.0)
     }
     
     public var body: some View {
@@ -36,18 +35,29 @@ public struct GarageView: View {
                 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 20) {
-                        // Clean Bike Identity Showcase Card
+                        // Royal Enfield Guerrilla 450 — Apex Black Showcase Card
                         GlassCard {
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack(alignment: .center) {
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(vehicleStore.activeVehicle.title)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(AppTheme.accent)
+                                        HStack(spacing: 6) {
+                                            Text("ROYAL ENFIELD")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .tracking(0.8)
+                                                .foregroundColor(AppTheme.accent)
+                                            
+                                            Text("· \(vehicleStore.activeVehicle.dashSSID)")
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                        }
                                         
-                                        Text(vehicleStore.activeVehicle.nickname)
+                                        Text("\(vehicleStore.activeVehicle.title) · \(vehicleStore.activeVehicle.nickname)")
                                             .font(.system(size: 22, weight: .bold))
                                             .foregroundColor(AppTheme.textPrimary)
+                                        
+                                        Text(vehicleStore.activeVehicle.engineSpec)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(AppTheme.textSecondary)
                                     }
                                     
                                     Spacer()
@@ -56,21 +66,22 @@ public struct GarageView: View {
                                         Circle()
                                             .fill(AppTheme.surfaceElevated)
                                             .frame(width: 48, height: 48)
-                                        Image(systemName: "bicycle")
+                                        Image(systemName: "motorcycle.fill")
                                             .font(.system(size: 20, weight: .medium))
-                                            .foregroundColor(AppTheme.textSecondary)
+                                            .foregroundColor(AppTheme.accent)
                                     }
                                 }
                                 
                                 Divider().background(AppTheme.border)
                                 
+                                // Odometer & Live Sync Pills
                                 HStack(spacing: 8) {
                                     Button(action: {
-                                        newOdoText = String(format: "%.0f", vehicleStore.activeVehicle.currentOdometer)
+                                        newOdoText = String(format: "%.1f", vehicleStore.activeVehicle.currentOdometer)
                                         showingOdoEdit = true
                                     }) {
                                         HStack(spacing: 5) {
-                                            Text(String(format: "%.0f km", vehicleStore.activeVehicle.currentOdometer))
+                                            Text(String(format: "%.1f km", vehicleStore.activeVehicle.currentOdometer))
                                                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                                                 .monospacedDigit()
                                                 .foregroundColor(AppTheme.textPrimary)
@@ -101,16 +112,48 @@ public struct GarageView: View {
                                         .background(AppTheme.emerald.opacity(0.14))
                                         .clipShape(Capsule())
                                 }
+                                
+                                // Factory Specs Row (Sherpa 450 Power, Tank, Tyres)
+                                Divider().background(AppTheme.border)
+                                
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Output")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(AppTheme.textTertiary)
+                                        Text("40 PS · 40 Nm")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Fuel Tank")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(AppTheme.textTertiary)
+                                        Text("11.0 L")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("Tyre Pressure")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(AppTheme.textTertiary)
+                                        Text("29F / 33R PSI")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 8)
                         
-                        // Service Interval Progress Card
+                        // Official Guerrilla 450 Service Schedule Card
                         GlassCard {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
-                                    Text("Next Service")
+                                    Text(vehicleStore.nextServiceMilestoneLabel)
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(AppTheme.textSecondary)
                                     Spacer()
@@ -130,8 +173,8 @@ public struct GarageView: View {
                                 }
                                 .frame(height: 6)
                                 
-                                Text("5,000 km scheduled maintenance cycle")
-                                    .font(.system(size: 12))
+                                Text("Auto-updates odometer via GPS & K1G link whenever connected to \(vehicleStore.activeVehicle.dashSSID)")
+                                    .font(.system(size: 11))
                                     .foregroundColor(AppTheme.textTertiary)
                             }
                         }
@@ -162,12 +205,14 @@ public struct GarageView: View {
                                 Text("No service records yet")
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(AppTheme.textPrimary)
-                                Text("Log oil changes, chain maintenance, and inspections.")
+                                Text("Log break-in service (500 km), 10W-50 oil changes, chain lube, and inspections.")
                                     .font(.system(size: 13))
                                     .foregroundColor(AppTheme.textSecondary)
+                                    .multilineTextAlignment(.center)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 44)
+                            .padding(.horizontal, 24)
                         } else {
                             VStack(spacing: 10) {
                                 ForEach(activeVehicleLogs) { log in
@@ -219,9 +264,9 @@ public struct GarageView: View {
                     db.addGarageLog(newLog)
                 }
             }
-            .alert("Update Odometer", isPresented: $showingOdoEdit) {
+            .alert("Sync Odometer", isPresented: $showingOdoEdit) {
                 TextField("Odometer (km)", text: $newOdoText)
-                    .keyboardType(.numberPad)
+                    .keyboardType(.decimalPad)
                 Button("Save") {
                     if let km = Double(newOdoText) {
                         vehicleStore.updateOdometer(km: km)

@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
 
 public struct SettingsView: View {
     @Bindable var firebase: FirebaseManager
@@ -13,6 +16,9 @@ public struct SettingsView: View {
     @State private var ssidInput = ""
     @State private var ipInput = ""
     @State private var showDiagnostics = false
+    #if canImport(PhotosUI)
+    @State private var selectedPhotoItem: PhotosPickerItem? = nil
+    #endif
     @AppStorage("pref_currency_symbol") private var currencySymbol = "₹"
     @AppStorage("pref_speed_unit") private var speedUnit = "km/h"
     
@@ -45,7 +51,7 @@ public struct SettingsView: View {
                                     // TFT Dash Row
                                     HStack {
                                         VStack(alignment: .leading, spacing: 3) {
-                                            Text("Himalayan 450 TFT")
+                                            Text("Guerrilla 450 TFT · Apex Black")
                                                 .font(.system(size: 16, weight: .semibold))
                                                 .foregroundColor(AppTheme.textPrimary)
                                             
@@ -129,24 +135,64 @@ public struct SettingsView: View {
                                             .background(AppTheme.surfaceElevated)
                                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                         
-                                        HStack(spacing: 12) {
-                                            Button("Bike (192.168.1.1)") {
-                                                ipInput = "192.168.1.1"
-                                                dashClient.setDashIP("192.168.1.1")
+                                        HStack(spacing: 8) {
+                                            // 1-Tap Bike Preset: Sets BOTH RE_RLK8_260813 SSID & 192.168.1.1 IP (+ 192.168.1.255 broadcast)
+                                            Button(action: {
+                                                ssidInput = TripperDashClient.defaultBikeSSID
+                                                ipInput = TripperDashClient.defaultBikeIP
+                                                dashClient.setDashSSID(TripperDashClient.defaultBikeSSID)
+                                                dashClient.setDashIP(TripperDashClient.defaultBikeIP)
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "motorcycle.fill")
+                                                        .font(.system(size: 10))
+                                                    Text("Bike (RE_RLK8_260813)")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .foregroundColor(dashClient.dashIP == "192.168.1.1" && dashClient.dashSSID == "RE_RLK8_260813" ? .black : AppTheme.textPrimary)
+                                                .padding(.horizontal, 11)
+                                                .padding(.vertical, 7)
+                                                .background(dashClient.dashIP == "192.168.1.1" && dashClient.dashSSID == "RE_RLK8_260813" ? AppTheme.accent : AppTheme.surfaceElevated)
+                                                .clipShape(Capsule())
                                             }
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(dashClient.dashIP == "192.168.1.1" ? AppTheme.accent : AppTheme.textTertiary)
+                                            .buttonStyle(.plain)
+                                            
+                                            // 1-Tap Local Mac Wi-Fi Preset: Sets BOTH Host IP (192.168.0.9) & Broadcast IP (192.168.0.255)
+                                            Button(action: {
+                                                ssidInput = TripperDashClient.defaultBikeSSID
+                                                ipInput = TripperDashClient.defaultLocalMacIP
+                                                dashClient.setDashSSID(TripperDashClient.defaultBikeSSID)
+                                                dashClient.setDashIP(TripperDashClient.defaultLocalMacIP)
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "laptopcomputer")
+                                                        .font(.system(size: 10))
+                                                    Text("Local (\(TripperDashClient.defaultLocalMacIP))")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .foregroundColor(dashClient.dashIP == TripperDashClient.defaultLocalMacIP ? .black : AppTheme.textPrimary)
+                                                .padding(.horizontal, 11)
+                                                .padding(.vertical, 7)
+                                                .background(dashClient.dashIP == TripperDashClient.defaultLocalMacIP ? AppTheme.emerald : AppTheme.surfaceElevated)
+                                                .clipShape(Capsule())
+                                            }
+                                            .buttonStyle(.plain)
                                             
                                             Spacer()
                                             
-                                            Button("Localhost (127.0.0.1)") {
+                                            Button("127.0.0.1") {
                                                 ipInput = "127.0.0.1"
                                                 dashClient.setDashIP("127.0.0.1")
                                             }
-                                            .font(.system(size: 12, weight: .medium))
+                                            .font(.system(size: 11, weight: .medium))
                                             .foregroundColor(dashClient.dashIP == "127.0.0.1" ? AppTheme.accent : AppTheme.textTertiary)
                                         }
-                                        .padding(.top, 2)
+                                        .padding(.top, 4)
+                                        
+                                        Text("Active Target: \(dashClient.dashIP) · Broadcast: \(dashClient.broadcastIP)")
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(AppTheme.textTertiary)
+                                            .padding(.top, 2)
                                     }
                                     
                                     Divider().background(AppTheme.border)
@@ -223,6 +269,90 @@ public struct SettingsView: View {
                                         }
                                     }
                                     .tint(AppTheme.accent)
+                                    
+                                    Divider().background(AppTheme.border)
+                                    
+                                    // Homescreen Wallpaper Customization (Themes + Custom Photo Library Picker)
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack {
+                                            Label("Homescreen Wallpaper", systemImage: "photo.on.rectangle.angled")
+                                                .font(.system(size: 15, weight: .medium))
+                                                .foregroundColor(AppTheme.textPrimary)
+                                            Spacer()
+                                            Text(dashClient.wallpaperStyle.rawValue)
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundColor(AppTheme.accent)
+                                        }
+                                        
+                                        ScrollView(.horizontal, showsIndicators: false) {
+                                            HStack(spacing: 8) {
+                                                ForEach(TFTWallpaperStyle.allCases, id: \.self) { style in
+                                                    if style != .customPhoto || dashClient.hasCustomWallpaper {
+                                                        PillBadge(
+                                                            text: style.rawValue,
+                                                            isSelected: dashClient.wallpaperStyle == style
+                                                        ) {
+                                                            dashClient.wallpaperStyle = style
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        #if canImport(PhotosUI)
+                                        HStack(spacing: 10) {
+                                            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "photo.badge.plus")
+                                                        .font(.system(size: 13, weight: .semibold))
+                                                    Text(dashClient.hasCustomWallpaper ? "Change Wallpaper Photo" : "Add Wallpaper from Photos")
+                                                        .font(.system(size: 13, weight: .semibold))
+                                                }
+                                                .foregroundColor(.black)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 10)
+                                                .background(AppTheme.accent)
+                                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .onChange(of: selectedPhotoItem) { _, newItem in
+                                                guard let newItem = newItem else { return }
+                                                Task {
+                                                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                                                        dashClient.saveCustomWallpaperData(data)
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if dashClient.hasCustomWallpaper {
+                                                Button(action: { dashClient.clearCustomWallpaper() }) {
+                                                    Image(systemName: "trash")
+                                                        .font(.system(size: 13, weight: .semibold))
+                                                        .foregroundColor(AppTheme.coral)
+                                                        .padding(10)
+                                                        .background(AppTheme.surfaceElevated)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        #endif
+                                        
+                                        if dashClient.wallpaperStyle != .pureBlack {
+                                            HStack(spacing: 10) {
+                                                Text("Dimming")
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(AppTheme.textSecondary)
+                                                Slider(value: $dashClient.wallpaperDimming, in: 0.15...0.85)
+                                                    .tint(AppTheme.accent)
+                                                Text("\(Int(dashClient.wallpaperDimming * 100))%")
+                                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                                    .monospacedDigit()
+                                                    .foregroundColor(AppTheme.textTertiary)
+                                                    .frame(width: 34, alignment: .trailing)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             .padding(.horizontal, 20)

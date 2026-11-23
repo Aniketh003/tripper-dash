@@ -4,6 +4,7 @@ public struct CockpitView: View {
     @Bindable var tracker: LocationTracker
     @Bindable var vehicleStore: VehicleStore
     @Bindable var dashClient: TripperDashClient
+    @Bindable var podClient: TripperPodClient = TripperPodClient.shared
     @Bindable var media: MediaPlaybackService = MediaPlaybackService.shared
     @Bindable var call: CallHandlingService = CallHandlingService.shared
     @Bindable var battery: BatteryOptimizationService = BatteryOptimizationService.shared
@@ -62,10 +63,10 @@ public struct CockpitView: View {
                                 // Dash Link Pill
                                 HStack(spacing: 5) {
                                     Circle()
-                                        .fill(dashClient.connectionState == .connected ? AppTheme.emerald : AppTheme.textTertiary)
+                                        .fill(dashClient.connectionState == .connected || podClient.isConnected ? AppTheme.emerald : (isConnecting(dashClient.connectionState) ? AppTheme.accent : AppTheme.textTertiary))
                                         .frame(width: 7, height: 7)
                                     
-                                    Text(dashClient.connectionState == .connected ? "DASH LINKED" : "PHONE HUD")
+                                    Text(dashClient.connectionState == .connected ? "TFT LINKED" : (podClient.isConnected ? "POD LINKED" : (isConnecting(dashClient.connectionState) ? "LINKING..." : "PHONE HUD")))
                                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                                         .foregroundColor(AppTheme.textSecondary)
                                 }
@@ -299,5 +300,9 @@ public struct CockpitView: View {
         let mins = totalSeconds / 60
         let secs = totalSeconds % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+    
+    private func isConnecting(_ state: DashConnectionState) -> Bool {
+        state == .verifyingNetwork || state == .requestingAuth || state == .exchangingKeys
     }
 }

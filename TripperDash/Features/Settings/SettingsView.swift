@@ -7,6 +7,7 @@ public struct SettingsView: View {
     
     @State private var showingEmailSignIn = false
     @State private var emailInput = ""
+    @State private var ssidInput = ""
     @AppStorage("pref_currency_symbol") private var currencySymbol = "₹"
     @AppStorage("pref_speed_unit") private var speedUnit = "km/h"
     
@@ -18,6 +19,7 @@ public struct SettingsView: View {
         self.firebase = firebase
         self.dashClient = dashClient
         self.podClient = podClient
+        _ssidInput = State(initialValue: dashClient.dashSSID)
     }
     
     public var body: some View {
@@ -27,6 +29,179 @@ public struct SettingsView: View {
                 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 20) {
+                        // Motorcycle Dash Hardware Connection
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("BIKE DASH HARDWARE (ROYAL ENFIELD)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(AppTheme.textTertiary)
+                                .padding(.horizontal, 20)
+                            
+                            GlassCard {
+                                VStack(alignment: .leading, spacing: 14) {
+                                    // TFT Dash (Himalayan 450)
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("Himalayan 450 TFT (Wi-Fi)")
+                                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(AppTheme.textPrimary)
+                                                
+                                                HStack(spacing: 6) {
+                                                    Circle()
+                                                        .fill(dashClient.connectionState == .connected ? AppTheme.emerald : (dashClient.connectionState == .disconnected ? AppTheme.textTertiary : AppTheme.accent))
+                                                        .frame(width: 7, height: 7)
+                                                    
+                                                    Text(dashClient.connectionState.displayText)
+                                                        .font(.system(size: 11, design: .monospaced))
+                                                        .foregroundColor(dashClient.connectionState == .connected ? AppTheme.emerald : AppTheme.textSecondary)
+                                                }
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Button(action: {
+                                                if dashClient.connectionState == .connected {
+                                                    dashClient.disconnect()
+                                                } else if dashClient.connectionState == .disconnected || isFailed(dashClient.connectionState) {
+                                                    dashClient.connect()
+                                                } else {
+                                                    dashClient.disconnect()
+                                                }
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    if isConnecting(dashClient.connectionState) {
+                                                        ProgressView().tint(.white).scaleEffect(0.8)
+                                                    }
+                                                    Text(buttonLabel(for: dashClient.connectionState))
+                                                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                                                }
+                                                .foregroundColor(dashClient.connectionState == .connected ? AppTheme.coral : .white)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .background(dashClient.connectionState == .connected ? AppTheme.surfaceElevated : AppTheme.accent)
+                                                .clipShape(Capsule())
+                                            }
+                                        }
+                                        
+                                        // SSID input field
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("DASH WI-FI SSID (From Bike Screen)")
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                            
+                                            HStack {
+                                                TextField("RE_450_XXXXXX", text: $ssidInput)
+                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .foregroundColor(.white)
+                                                    .autocorrectionDisabled()
+                                                    .textInputAutocapitalization(.characters)
+                                                    .onChange(of: ssidInput) { _, newValue in
+                                                        dashClient.setDashSSID(newValue)
+                                                    }
+                                                
+                                                if ssidInput != dashClient.dashSSID {
+                                                    Button("Save") {
+                                                        dashClient.setDashSSID(ssidInput)
+                                                    }
+                                                    .font(.system(size: 11, weight: .bold))
+                                                    .foregroundColor(AppTheme.accent)
+                                                }
+                                            }
+                                            .padding(8)
+                                            .background(AppTheme.surfaceElevated)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            
+                                            Text("Look under: Menu > Appearance > Screen Type > Digital")
+                                                .font(.system(size: 10, design: .rounded))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                        }
+                                    }
+                                    
+                                    Divider().background(AppTheme.border)
+                                    
+                                    // Tripper Pod (BLE)
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Tripper Pod (Bluetooth)")
+                                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                                .foregroundColor(AppTheme.textPrimary)
+                                            Text(podClient.statusMessage)
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                        }
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            if podClient.isConnected {
+                                                podClient.disconnect()
+                                            } else {
+                                                podClient.startScanning()
+                                            }
+                                        }) {
+                                            Text(podClient.isConnected ? "Disconnect" : (podClient.isScanning ? "Scanning..." : "Scan BLE"))
+                                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                                .foregroundColor(podClient.isConnected ? AppTheme.coral : AppTheme.accent)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                        }
+                        .padding(.top, 12)
+                        
+                        // Live Diagnostic Console
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("CONNECTION DIAGNOSTIC CONSOLE")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .foregroundColor(AppTheme.textTertiary)
+                                
+                                Spacer()
+                                
+                                Button(action: { dashClient.clearLogs() }) {
+                                    Text("Clear")
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(AppTheme.textTertiary)
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                if dashClient.diagnosticLogs.isEmpty {
+                                    Text("Tap 'Connect' to begin diagnostic check...")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(AppTheme.textTertiary)
+                                        .padding(12)
+                                } else {
+                                    ScrollView {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            ForEach(dashClient.diagnosticLogs, id: \.self) { log in
+                                                Text(log)
+                                                    .font(.system(size: 11, design: .monospaced))
+                                                    .foregroundColor(logColor(for: log))
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                            }
+                                        }
+                                        .padding(10)
+                                    }
+                                    .frame(maxHeight: 180)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.black.opacity(0.85))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(AppTheme.border, lineWidth: 1)
+                            )
+                            .padding(.horizontal, 20)
+                        }
+                        
                         // Firebase Cloud Sync Section
                         VStack(alignment: .leading, spacing: 8) {
                             Text("FIREBASE CLOUD SYNC")
@@ -90,82 +265,6 @@ public struct SettingsView: View {
                                             .foregroundColor(AppTheme.accent)
                                         }
                                         .disabled(firebase.isSyncing)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                        }
-                        .padding(.top, 12)
-                        
-                        // Motorcycle Dash Hardware Connection
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("BIKE DASH HARDWARE (ROYAL ENFIELD)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(AppTheme.textTertiary)
-                                .padding(.horizontal, 20)
-                            
-                            GlassCard {
-                                VStack(alignment: .leading, spacing: 14) {
-                                    // TFT Dash (Himalayan 450)
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Himalayan 450 TFT (Wi-Fi)")
-                                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                                .foregroundColor(AppTheme.textPrimary)
-                                            Text("Direct UDP/K1G Connection (\(dashClient.dashIP))")
-                                                .font(.system(size: 11, design: .monospaced))
-                                                .foregroundColor(AppTheme.textTertiary)
-                                        }
-                                        
-                                        Spacer()
-                                        
-                                        Button(action: {
-                                            if dashClient.connectionState == .connected {
-                                                dashClient.disconnect()
-                                            } else {
-                                                dashClient.connect()
-                                            }
-                                        }) {
-                                            Text(dashClient.connectionState == .connected ? "Disconnect" : "Connect")
-                                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                                .foregroundColor(dashClient.connectionState == .connected ? AppTheme.coral : AppTheme.accent)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
-                                                .background(AppTheme.surfaceElevated)
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-                                    
-                                    Divider().background(AppTheme.border)
-                                    
-                                    // Tripper Pod (BLE)
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Tripper Pod (Bluetooth)")
-                                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                                .foregroundColor(AppTheme.textPrimary)
-                                            Text(podClient.statusMessage)
-                                                .font(.system(size: 11, design: .monospaced))
-                                                .foregroundColor(AppTheme.textTertiary)
-                                        }
-                                        
-                                        Spacer()
-                                        
-                                        Button(action: {
-                                            if podClient.isConnected {
-                                                podClient.disconnect()
-                                            } else {
-                                                podClient.startScanning()
-                                            }
-                                        }) {
-                                            Text(podClient.isConnected ? "Disconnect" : (podClient.isScanning ? "Scanning..." : "Scan BLE"))
-                                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                                .foregroundColor(podClient.isConnected ? AppTheme.coral : AppTheme.accent)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
-                                                .background(AppTheme.surfaceElevated)
-                                                .clipShape(Capsule())
-                                        }
                                     }
                                 }
                             }
@@ -241,5 +340,33 @@ public struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
+    }
+    
+    private func isConnecting(_ state: DashConnectionState) -> Bool {
+        state == .verifyingNetwork || state == .requestingAuth || state == .exchangingKeys
+    }
+    
+    private func isFailed(_ state: DashConnectionState) -> Bool {
+        if case .failed = state { return true }
+        return false
+    }
+    
+    private func buttonLabel(for state: DashConnectionState) -> String {
+        switch state {
+        case .connected: return "Disconnect"
+        case .verifyingNetwork, .requestingAuth, .exchangingKeys: return "Cancel"
+        case .disconnected, .failed: return "Connect"
+        }
+    }
+    
+    private func logColor(for log: String) -> Color {
+        if log.contains("❌") || log.contains("failed") {
+            return AppTheme.coral
+        } else if log.contains("⚠️") || log.contains("WARNING") {
+            return AppTheme.accent
+        } else if log.contains("🎉") || log.contains("SUCCESS") || log.contains("✅") {
+            return AppTheme.emerald
+        }
+        return AppTheme.textSecondary
     }
 }

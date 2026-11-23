@@ -874,10 +874,10 @@ public final class TripperDashClient: @unchecked Sendable {
     }
     
     public func sendCallAlert(callerName: String, isRinging: Bool, isOngoing: Bool, durationSeconds: UInt32) {
-        guard connectionState == .connected else {
-            TFTProjectionService.shared.triggerImmediateFrame()
-            return
-        }
+        TFTProjectionService.shared.triggerImmediateFrame()
+        guard connectionState == .connected else { return }
+        
+        // 1. Send authentic Call Card packets (05 21, 05 4D, AES-256-CBC 05 22)
         let packets = K1GPacket.makeCallCardPackets(
             callerName: callerName,
             isRinging: isRinging,
@@ -888,7 +888,33 @@ public final class TripperDashClient: @unchecked Sendable {
         for p in packets {
             sendRawPacket(p)
         }
-        TFTProjectionService.shared.triggerImmediateFrame()
+        
+        // 2. Immediately push updated 0049 Heartbeat with active callStatusCode (0x0A Ringing / 0x14 In-Call / 0x32 Idle)
+        let battery = BatteryOptimizationService.shared
+        let weather = WeatherService.shared
+        let media = MediaPlaybackService.shared
+        let callCode: UInt8 = isRinging ? 0x0A : (isOngoing ? 0x14 : 0x32)
+        let hb0049 = K1GPacket.makeHeartbeatPacket(
+            batteryPct: battery.batteryLevelPercent,
+            charging: battery.isCharging,
+            gpsOn: true,
+            weatherIcon: (showWeatherOnTFT && weather.isLoaded) ? weather.dashWeatherIcon : 0xFF,
+            tempC: (showWeatherOnTFT && weather.isLoaded) ? weather.temperatureC : nil,
+            volumePercent: media.volumePercent,
+            callStatusCode: callCode
+        )
+        sendRawPacket(DashK1GProtocol.patchSequence(data: hb0049, seq: nextSeq()))
+        
+        // 3. Immediately update the 007E Route Card banner to show Caller Name on the TFT banner strip
+        let rcPkt = DashK1GProtocol.buildRouteCardPacket(
+            title: buildHomescreenBannerTitle(),
+            seq: nextSeq(),
+            projectionOn: true,
+            isNavigating: isNavigationActive,
+            maneuver: activeNavIconCode,
+            totalDistanceMeters: activeNavDistanceMeters
+        )
+        sendRawPacket(rcPkt)
     }
     
     private func dispatchJoystick(_ event: DashJoystickEvent) {

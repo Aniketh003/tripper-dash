@@ -37,6 +37,7 @@
 		A10028 /* DashK1GProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10028 /* DashK1GProtocol.swift */; };
 		A10029 /* WeatherService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029 /* WeatherService.swift */; };
 		A10030 /* TFTProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* TFTProjectionService.swift */; };
+		A10031 /* SpotifyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031 /* SpotifyService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -71,6 +72,7 @@
 		B10028 /* DashK1GProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/DashK1GProtocol.swift; sourceTree = "<group>"; };
 		B10029 /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/WeatherService.swift; sourceTree = "<group>"; };
 		B10030 /* TFTProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TFTDash/TFTProjectionService.swift; sourceTree = "<group>"; };
+		B10031 /* SpotifyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SpotifyService.swift; sourceTree = "<group>"; };
 		C10001 /* TripperDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TripperDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -127,6 +129,7 @@
 				B10025 /* CallHandlingService.swift */,
 				B10026 /* BatteryOptimizationService.swift */,
 				B10029 /* WeatherService.swift */,
+				B10031 /* SpotifyService.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -277,6 +280,7 @@
 				A10028 /* DashK1GProtocol.swift in Sources */,
 				A10029 /* WeatherService.swift in Sources */,
 				A10030 /* TFTProjectionService.swift in Sources */,
+				A10031 /* SpotifyService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

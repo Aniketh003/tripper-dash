@@ -5,6 +5,9 @@ import CoreVideo
 import CoreMedia
 import VideoToolbox
 import Darwin
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Exact Royal Enfield Himalayan 450 TFT Dome Geometry (DashGlass 526×300)
 /// Measured on physical hardware: the round TFT glass is 526 px across, centered at (263, 263) with radius 263.
@@ -405,7 +408,8 @@ public final class TFTProjectionService: @unchecked Sendable {
     private let height: Int32 = 300
     private var compressionSession: VTCompressionSession?
     private var videoSocketFD: Int32 = -1
-    private var renderTimer: Timer?
+    private var renderTimer: DispatchSourceTimer?
+    private let videoQueue = DispatchQueue(label: "com.tripperdash.videoencoder", qos: .userInteractive)
     private var rtpSequenceNumber: UInt16 = UInt16.random(in: 1...60000)
     private var rtpTimestampBase: UInt32 = UInt32.random(in: 1000...UInt32.max / 2)
     private var streamStartTime: Date = Date()
@@ -415,6 +419,7 @@ public final class TFTProjectionService: @unchecked Sendable {
     private var lastFrameCountReset: Date = Date()
     private var framesInWindow: Int = 0
     private var forceNextKeyFrame: Bool = true
+    private var lastPixelBuffer: CVPixelBuffer?
     
     // Cached normalized SPS & PPS for Dash compound IDR bundling
     private var cachedSPS: Data?
@@ -428,12 +433,34 @@ public final class TFTProjectionService: @unchecked Sendable {
         self.trackerRef = tracker
     }
     
+    /// Called by BackgroundKeepAliveService when the app enters background (e.g. user opens Spotify, locks phone, or call rings)
+    public func handleAppDidEnterBackground() {
+        guard isStreaming else { return }
+        videoQueue.async { [weak self] in
+            guard let self = self, self.isStreaming else { return }
+            self.setupH264Encoder()
+            self.forceNextKeyFrame = true
+            self.encodeNextFrameOnQueue(forceKeyframe: true)
+        }
+    }
+    
+    /// Called by BackgroundKeepAliveService when returning to foreground
+    public func handleAppWillEnterForeground() {
+        guard isStreaming else { return }
+        videoQueue.async { [weak self] in
+            guard let self = self, self.isStreaming else { return }
+            self.setupH264Encoder()
+            self.forceNextKeyFrame = true
+            self.encodeNextFrameOnQueue(forceKeyframe: true)
+        }
+    }
+    
     /// Triggers an immediate keyframe encode & RTP transmission whenever song, volume, weather, or call state changes!
     public func triggerImmediateFrame() {
         guard isStreaming else { return }
         forceNextKeyFrame = true
-        Task { @MainActor in
-            self.captureAndEncodeFrame(forceKeyframe: true)
+        videoQueue.async { [weak self] in
+            self?.encodeNextFrameOnQueue(forceKeyframe: true)
         }
     }
     
@@ -456,35 +483,36 @@ public final class TFTProjectionService: @unchecked Sendable {
         var sndBuf: Int32 = 524_288
         setsockopt(videoSocketFD, SOL_SOCKET, SO_SNDBUF, &sndBuf, socklen_t(MemoryLayout<Int32>.size))
         
-        setupH264Encoder()
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        DispatchQueue.main.async {
             self.isStreaming = true
             self.framesSent = 0
             self.framesInWindow = 0
             self.lastFrameCountReset = Date()
-            
-            // Encode initial keyframe immediately
-            Task { @MainActor in
-                self.captureAndEncodeFrame(forceKeyframe: true)
-            }
-            
-            // Stream at 4 FPS (exact stock Tripper Dash cadence; 1-second GOP = every 4th frame is an IDR bundle)
-            self.renderTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    self?.captureAndEncodeFrame()
-                }
-            }
         }
         
-        TripperDashClient.shared.log("📺 TFT Digital Homescreen H.264 stream started → \(ip):\(port) (526×300 @ 4 fps)")
+        videoQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.setupH264Encoder()
+            self.encodeNextFrameOnQueue(forceKeyframe: true)
+            
+            // Background-safe GCD DispatchSourceTimer at 4 FPS (never pauses when app is backgrounded or phone is ringing!)
+            let timer = DispatchSource.makeTimerSource(flags: .strict, queue: self.videoQueue)
+            timer.schedule(deadline: .now() + 0.25, repeating: .milliseconds(250), leeway: .milliseconds(20))
+            timer.setEventHandler { [weak self] in
+                self?.encodeNextFrameOnQueue(forceKeyframe: false)
+            }
+            timer.resume()
+            self.renderTimer = timer
+        }
+        
+        TripperDashClient.shared.log("📺 TFT Digital Homescreen H.264 stream started → \(ip):\(port) (526×300 @ 4 fps, background-persistent)")
     }
     
     public func stopStreaming() {
+        renderTimer?.cancel()
+        renderTimer = nil
+        
         DispatchQueue.main.async {
-            self.renderTimer?.invalidate()
-            self.renderTimer = nil
             self.isStreaming = false
             self.currentFPS = 0.0
         }
@@ -502,6 +530,11 @@ public final class TFTProjectionService: @unchecked Sendable {
     
     // MARK: - VideoToolbox H.264 Baseline Profile Setup (1s GOP, Zero B-Frames, Low Latency)
     private func setupH264Encoder() {
+        if let old = compressionSession {
+            VTCompressionSessionInvalidate(old)
+            compressionSession = nil
+        }
+        
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
@@ -533,10 +566,13 @@ public final class TFTProjectionService: @unchecked Sendable {
         self.compressionSession = session
     }
     
-    // MARK: - Render SwiftUI 526×300 Dome → CVPixelBuffer → H.264 Compound IDR RTP
-    @MainActor
-    private func captureAndEncodeFrame(forceKeyframe: Bool = false) {
-        guard isStreaming, let session = compressionSession else { return }
+    // MARK: - Background-Safe Frame Snapshot & H.264 Encode
+    private func encodeNextFrameOnQueue(forceKeyframe: Bool) {
+        guard videoSocketFD >= 0 else { return }
+        if compressionSession == nil {
+            setupH264Encoder()
+        }
+        guard let session = compressionSession else { return }
         
         let client = TripperDashClient.shared
         let weather = WeatherService.shared
@@ -545,12 +581,12 @@ public final class TFTProjectionService: @unchecked Sendable {
         let battery = BatteryOptimizationService.shared
         let heading = trackerRef?.currentHeading ?? 0
         
-        let canvas = TFTHomescreenCanvas(
+        // Build 526×300 pixel buffer using thread-safe CoreGraphics/UIKit renderer (works in foreground AND background!)
+        let pixelBuffer = renderDomePixelBufferBackgroundSafe(
             heading: heading,
             weatherLoaded: weather.isLoaded,
             weatherTempC: weather.temperatureC,
             weatherCondition: weather.conditionText,
-            weatherSymbol: weather.symbolName,
             weatherLocation: weather.locationName,
             windKmh: weather.windSpeedKmh,
             songTitle: media.currentTitle,
@@ -566,17 +602,11 @@ public final class TFTProjectionService: @unchecked Sendable {
             showWeather: client.showWeatherOnTFT,
             showMusic: client.showMusicOnTFT,
             activeNavInstruction: client.isNavigationActive ? client.activeNavStreet : nil,
-            activeNavDistanceMeters: client.isNavigationActive ? client.activeNavDistanceMeters : nil,
-            forDashStream: true
-        )
+            activeNavDistanceMeters: client.isNavigationActive ? client.activeNavDistanceMeters : nil
+        ) ?? lastPixelBuffer
         
-        let renderer = ImageRenderer(content: canvas)
-        renderer.scale = 1.0
-        
-        guard let cgImage = renderer.cgImage,
-              let pixelBuffer = makePixelBuffer(from: cgImage, width: Int(width), height: Int(height)) else {
-            return
-        }
+        guard let bufferToEncode = pixelBuffer else { return }
+        self.lastPixelBuffer = bufferToEncode
         
         let elapsedMs = Int64(Date().timeIntervalSince(streamStartTime) * 1000.0)
         let pts = CMTime(value: max(Int64(framesSent + 1), elapsedMs), timescale: 1000)
@@ -589,17 +619,296 @@ public final class TFTProjectionService: @unchecked Sendable {
             frameProps = dict as CFDictionary
         }
         
-        VTCompressionSessionEncodeFrame(
+        let encodeStatus = VTCompressionSessionEncodeFrame(
             session,
-            imageBuffer: pixelBuffer,
+            imageBuffer: bufferToEncode,
             presentationTimeStamp: pts,
             duration: duration,
             frameProperties: frameProps,
             infoFlagsOut: nil
         ) { [weak self] status, _, sampleBuffer in
-            guard let self = self, status == noErr, let sampleBuffer = sampleBuffer else { return }
+            guard let self = self else { return }
+            if status != noErr {
+                // Encoder was invalidated by iOS background transition — recreate on videoQueue immediately!
+                self.videoQueue.async {
+                    self.setupH264Encoder()
+                    self.forceNextKeyFrame = true
+                }
+                return
+            }
+            guard let sampleBuffer = sampleBuffer else { return }
             self.packetizeAndSendRTP(sampleBuffer: sampleBuffer)
         }
+        
+        if encodeStatus != noErr {
+            // Recreate encoder immediately and retry once
+            setupH264Encoder()
+            forceNextKeyFrame = true
+        }
+    }
+    
+    /// Thread-safe 526×300 Dome Renderer using UIGraphicsImageRenderer / CoreGraphics.
+    /// Runs reliably on `videoQueue` even when the app is in the background, when Spotify is open,
+    /// when the phone screen is locked, or when the iOS Incoming Call screen covers the display!
+    private func renderDomePixelBufferBackgroundSafe(
+        heading: Double,
+        weatherLoaded: Bool,
+        weatherTempC: Int,
+        weatherCondition: String,
+        weatherLocation: String,
+        windKmh: Int,
+        songTitle: String,
+        songArtist: String,
+        isMusicPlaying: Bool,
+        volumePercent: Int,
+        batteryPercent: Int,
+        isCharging: Bool,
+        isCallRinging: Bool,
+        isCallOngoing: Bool,
+        callerName: String,
+        callDuration: String,
+        showWeather: Bool,
+        showMusic: Bool,
+        activeNavInstruction: String?,
+        activeNavDistanceMeters: Int?
+    ) -> CVPixelBuffer? {
+        #if canImport(UIKit)
+        let size = CGSize(width: Int(width), height: Int(height))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = true
+        
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { ctx in
+            let cg = ctx.cgContext
+            let rect = CGRect(origin: .zero, size: size)
+            
+            // 1. Pure OLED black background
+            UIColor.black.setFill()
+            cg.fill(rect)
+            
+            // Clip to 526×300 DashGlass dome (circle centered at (263, 263), radius 263)
+            let domePath = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 526, height: 526))
+            domePath.addClip()
+            
+            let amber = UIColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0)
+            let emerald = UIColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0)
+            let coral = UIColor(red: 1.0, green: 0.27, blue: 0.23, alpha: 1.0)
+            
+            // 2. Top Status Capsule (Clock · Compass · Battery) at y = 32..62
+            let fmt = DateFormatter()
+            fmt.dateFormat = "HH:mm"
+            let timeStr = fmt.string(from: Date())
+            let dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+            let compassStr = dirs[Int((heading + 22.5) / 45.0) & 7]
+            let topText = "\(timeStr)   ·   \(compassStr)   ·   \(isCharging ? "⚡" : "")\(batteryPercent)%"
+            
+            let pillRect = CGRect(x: 158, y: 30, width: 210, height: 30)
+            UIColor(white: 1.0, alpha: 0.09).setFill()
+            UIBezierPath(roundedRect: pillRect, cornerRadius: 15).fill()
+            
+            let topPara = NSMutableParagraphStyle()
+            topPara.alignment = .center
+            let topAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13.5, weight: .bold),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: topPara
+            ]
+            (topText as NSString).draw(in: CGRect(x: pillRect.minX, y: pillRect.minY + 6, width: pillRect.width, height: 20), withAttributes: topAttrs)
+            
+            // 3. Priority 1: Incoming or Ongoing Phone Call Card (High-Visibility Full Dome Overlay!)
+            if isCallRinging || isCallOngoing {
+                let cardRect = CGRect(x: 43, y: 74, width: 440, height: 204)
+                let accent = isCallRinging ? emerald : amber
+                
+                accent.withAlphaComponent(0.18).setFill()
+                let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 24)
+                cardPath.fill()
+                accent.withAlphaComponent(0.75).setStroke()
+                cardPath.lineWidth = 2.0
+                cardPath.stroke()
+                
+                // Status Badge
+                let badgeText = isCallRinging ? "📞  INCOMING PHONE CALL" : "🟢  ACTIVE CALL  ·  \(callDuration)"
+                let badgeAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 14, weight: .heavy),
+                    .foregroundColor: accent,
+                    .paragraphStyle: topPara
+                ]
+                (badgeText as NSString).draw(in: CGRect(x: cardRect.minX + 16, y: cardRect.minY + 22, width: cardRect.width - 32, height: 22), withAttributes: badgeAttrs)
+                
+                // Caller Name (Large, crisp, unmistakable)
+                let displayCaller = callerName.isEmpty ? "Incoming Call" : callerName
+                let callerAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 28, weight: .bold),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: topPara
+                ]
+                (displayCaller as NSString).draw(in: CGRect(x: cardRect.minX + 18, y: cardRect.minY + 58, width: cardRect.width - 36, height: 38), withAttributes: callerAttrs)
+                
+                // Handlebar Action Pills
+                if isCallRinging {
+                    let ansRect = CGRect(x: cardRect.minX + 36, y: cardRect.minY + 122, width: 174, height: 48)
+                    emerald.setFill()
+                    UIBezierPath(roundedRect: ansRect, cornerRadius: 24).fill()
+                    let btnAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                        .foregroundColor: UIColor.black,
+                        .paragraphStyle: topPara
+                    ]
+                    ("↑ / ● Answer" as NSString).draw(in: CGRect(x: ansRect.minX, y: ansRect.minY + 15, width: ansRect.width, height: 20), withAttributes: btnAttrs)
+                    
+                    let rejRect = CGRect(x: cardRect.maxX - 210, y: cardRect.minY + 122, width: 174, height: 48)
+                    coral.setFill()
+                    UIBezierPath(roundedRect: rejRect, cornerRadius: 24).fill()
+                    let rejAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: topPara
+                    ]
+                    ("↓ Reject" as NSString).draw(in: CGRect(x: rejRect.minX, y: rejRect.minY + 15, width: rejRect.width, height: 20), withAttributes: rejAttrs)
+                } else {
+                    let endRect = CGRect(x: cardRect.midX - 110, y: cardRect.minY + 122, width: 220, height: 48)
+                    coral.setFill()
+                    UIBezierPath(roundedRect: endRect, cornerRadius: 24).fill()
+                    let endAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: topPara
+                    ]
+                    ("↓ / ● End Call" as NSString).draw(in: CGRect(x: endRect.minX, y: endRect.minY + 15, width: endRect.width, height: 20), withAttributes: endAttrs)
+                }
+                return
+            }
+            
+            // 4. Priority 2: Active Navigation Turn Card (only when a route is active)
+            if let navText = activeNavInstruction, !navText.isEmpty, let dist = activeNavDistanceMeters {
+                let navRect = CGRect(x: 43, y: 82, width: 440, height: 185)
+                UIColor(white: 1.0, alpha: 0.08).setFill()
+                UIBezierPath(roundedRect: navRect, cornerRadius: 22).fill()
+                
+                let distStr = dist >= 1000 ? String(format: "%.1f km", Double(dist) / 1000.0) : "\(dist) m"
+                let distAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 34, weight: .bold),
+                    .foregroundColor: amber,
+                    .paragraphStyle: topPara
+                ]
+                (distStr as NSString).draw(in: CGRect(x: navRect.minX + 20, y: navRect.minY + 34, width: navRect.width - 40, height: 42), withAttributes: distAttrs)
+                
+                let streetAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 18, weight: .semibold),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: topPara
+                ]
+                (navText as NSString).draw(in: CGRect(x: navRect.minX + 24, y: navRect.minY + 92, width: navRect.width - 48, height: 56), withAttributes: streetAttrs)
+                return
+            }
+            
+            // 5. Priority 3: Clean Digital Homescreen (Weather Card + Now Playing Music & Volume Card)
+            var currentY: CGFloat = 70
+            let leftPara = NSMutableParagraphStyle()
+            leftPara.alignment = .left
+            leftPara.lineBreakMode = .byTruncatingTail
+            
+            if showWeather {
+                let wRect = CGRect(x: 68, y: currentY, width: 390, height: 64)
+                UIColor(white: 1.0, alpha: 0.07).setFill()
+                UIBezierPath(roundedRect: wRect, cornerRadius: 16).fill()
+                
+                if weatherLoaded {
+                    let tempStr = "\(weatherTempC)°C"
+                    let tempAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 23, weight: .bold),
+                        .foregroundColor: amber
+                    ]
+                    (tempStr as NSString).draw(in: CGRect(x: wRect.minX + 18, y: wRect.minY + 18, width: 78, height: 28), withAttributes: tempAttrs)
+                    
+                    let condAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 15, weight: .semibold),
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: leftPara
+                    ]
+                    (weatherCondition as NSString).draw(in: CGRect(x: wRect.minX + 98, y: wRect.minY + 12, width: 274, height: 20), withAttributes: condAttrs)
+                    
+                    let locLine = weatherLocation.isEmpty ? "Wind \(windKmh) km/h" : "\(weatherLocation) · Wind \(windKmh) km/h"
+                    let locAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 12.5, weight: .medium),
+                        .foregroundColor: UIColor(white: 1.0, alpha: 0.62),
+                        .paragraphStyle: leftPara
+                    ]
+                    (locLine as NSString).draw(in: CGRect(x: wRect.minX + 98, y: wRect.minY + 34, width: 274, height: 18), withAttributes: locAttrs)
+                } else {
+                    let waitAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 14, weight: .semibold),
+                        .foregroundColor: UIColor(white: 1.0, alpha: 0.8),
+                        .paragraphStyle: topPara
+                    ]
+                    ("Syncing Local GPS Weather..." as NSString).draw(in: CGRect(x: wRect.minX + 16, y: wRect.minY + 22, width: wRect.width - 32, height: 20), withAttributes: waitAttrs)
+                }
+                currentY += 74
+            }
+            
+            if showMusic {
+                let mRect = CGRect(x: 39, y: currentY, width: 448, height: 136)
+                UIColor(white: 1.0, alpha: 0.085).setFill()
+                UIBezierPath(roundedRect: mRect, cornerRadius: 20).fill()
+                
+                // Status Pill (PLAYING / PAUSED)
+                let badgeW: CGFloat = 78
+                let badgeRect = CGRect(x: mRect.maxX - badgeW - 18, y: mRect.minY + 18, width: badgeW, height: 24)
+                (isMusicPlaying ? amber : UIColor(white: 1.0, alpha: 0.14)).setFill()
+                UIBezierPath(roundedRect: badgeRect, cornerRadius: 12).fill()
+                
+                let bText = isMusicPlaying ? "PLAYING" : "PAUSED"
+                let bAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 10.5, weight: .bold),
+                    .foregroundColor: isMusicPlaying ? UIColor.black : UIColor(white: 1.0, alpha: 0.75),
+                    .paragraphStyle: topPara
+                ]
+                (bText as NSString).draw(in: CGRect(x: badgeRect.minX, y: badgeRect.minY + 5, width: badgeRect.width, height: 14), withAttributes: bAttrs)
+                
+                // Song Title & Artist
+                let titleAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 19, weight: .bold),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: leftPara
+                ]
+                (songTitle as NSString).draw(in: CGRect(x: mRect.minX + 20, y: mRect.minY + 16, width: mRect.width - badgeW - 48, height: 24), withAttributes: titleAttrs)
+                
+                let subText = songArtist.isEmpty ? (isMusicPlaying ? "Spotify / iPhone Audio" : "Paused · Use Handlebar Joystick") : songArtist
+                let subAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 14, weight: .medium),
+                    .foregroundColor: UIColor(white: 1.0, alpha: 0.65),
+                    .paragraphStyle: leftPara
+                ]
+                (subText as NSString).draw(in: CGRect(x: mRect.minX + 20, y: mRect.minY + 44, width: mRect.width - 40, height: 20), withAttributes: subAttrs)
+                
+                // Volume Bar Track
+                let barTrackRect = CGRect(x: mRect.minX + 20, y: mRect.minY + 94, width: mRect.width - 88, height: 8)
+                UIColor(white: 1.0, alpha: 0.15).setFill()
+                UIBezierPath(roundedRect: barTrackRect, cornerRadius: 4).fill()
+                
+                let fillW = max(8, barTrackRect.width * CGFloat(min(100, max(0, volumePercent))) / 100.0)
+                let barFillRect = CGRect(x: barTrackRect.minX, y: barTrackRect.minY, width: fillW, height: 8)
+                amber.setFill()
+                UIBezierPath(roundedRect: barFillRect, cornerRadius: 4).fill()
+                
+                let rightPara = NSMutableParagraphStyle()
+                rightPara.alignment = .right
+                let volAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 13, weight: .bold),
+                    .foregroundColor: UIColor(white: 1.0, alpha: 0.85),
+                    .paragraphStyle: rightPara
+                ]
+                ("\(volumePercent)%" as NSString).draw(in: CGRect(x: barTrackRect.maxX + 8, y: mRect.minY + 89, width: 52, height: 18), withAttributes: volAttrs)
+            }
+        }
+        
+        guard let cgImage = image.cgImage else { return nil }
+        return makePixelBuffer(from: cgImage, width: Int(width), height: Int(height))
+        #else
+        return nil
+        #endif
     }
     
     private func makePixelBuffer(from cgImage: CGImage, width: Int, height: Int) -> CVPixelBuffer? {

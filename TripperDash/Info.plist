@@ -30,6 +30,23 @@
 	<string>TripperDash communicates with the Royal Enfield TFT Dash (Himalayan 450) over Wi-Fi.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>TripperDash displays music track metadata and allows controlling playback using the motorcycle handlebar joystick.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.aniketh.tripperdash</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tripperdash</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>spotify</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

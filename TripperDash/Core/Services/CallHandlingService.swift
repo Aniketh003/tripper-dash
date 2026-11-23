@@ -22,14 +22,17 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
     private let callObserver = CXCallObserver()
     private let callController = CXCallController()
     private var activeCallUUID: UUID?
+    private var callMonitorTimer: DispatchSourceTimer?
     #endif
-    private var callTimer: Timer?
+    private var callDurationTimer: DispatchSourceTimer?
+    private let timerQueue = DispatchQueue(label: "com.tripperdash.calltimer", qos: .userInteractive)
     
     private override init() {
         super.init()
         #if os(iOS)
         callObserver.setDelegate(self, queue: .main)
         detectConnectedAudioDevice()
+        startBackgroundCallMonitor()
         #endif
     }
     
@@ -39,24 +42,117 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
         return String(format: "%02d:%02d", mins, secs)
     }
     
-    private func startCallTimer() {
-        callTimer?.invalidate()
-        callDurationSeconds = 0
-        callTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.isOngoing else { return }
-            self.callDurationSeconds += 1
-            TripperDashClient.shared.sendCallAlert(
-                callerName: self.callerName,
-                isRinging: false,
-                isOngoing: true,
-                durationSeconds: self.callDurationSeconds
-            )
+    #if os(iOS)
+    /// Polls `CXCallObserver.calls` on a background-safe GCD timer every 0.5s so incoming/ongoing
+    /// carrier calls are detected immediately even when iOS puts the app in background during ringtone!
+    private func startBackgroundCallMonitor() {
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + 0.5, repeating: .milliseconds(500))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, !self.isSimulatedCall else { return }
+            let calls = self.callObserver.calls
+            if let activeCall = calls.first(where: { !$0.hasEnded }) {
+                self.syncSystemCallState(activeCall)
+            } else if self.isRinging || self.isOngoing {
+                DispatchQueue.main.async {
+                    guard !self.isSimulatedCall else { return }
+                    self.isRinging = false
+                    self.isOngoing = false
+                    self.statusNote = nil
+                    self.stopCallTimer()
+                    TripperDashClient.shared.sendCallAlert(
+                        callerName: self.callerName,
+                        isRinging: false,
+                        isOngoing: false,
+                        durationSeconds: 0
+                    )
+                }
+            }
         }
+        timer.resume()
+        self.callMonitorTimer = timer
+    }
+    
+    private func syncSystemCallState(_ call: CXCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.activeCallUUID = call.uuid
+            self.isSimulatedCall = false
+            
+            if call.hasEnded {
+                if self.isRinging || self.isOngoing {
+                    self.isRinging = false
+                    self.isOngoing = false
+                    self.statusNote = nil
+                    self.stopCallTimer()
+                    TripperDashClient.shared.log("📞 Phone Call Ended")
+                    TripperDashClient.shared.sendCallAlert(
+                        callerName: self.callerName,
+                        isRinging: false,
+                        isOngoing: false,
+                        durationSeconds: 0
+                    )
+                }
+            } else if call.hasConnected {
+                if !self.isOngoing || self.isRinging {
+                    self.isRinging = false
+                    self.isOngoing = true
+                    if self.callerName.isEmpty || self.callerName == "Incoming Call" || self.callerName == "Dialing..." {
+                        self.callerName = "Active Call"
+                    }
+                    self.startCallTimer()
+                    self.detectConnectedAudioDevice()
+                    TripperDashClient.shared.log("📞 Phone Call Connected")
+                    TripperDashClient.shared.sendCallAlert(
+                        callerName: self.callerName,
+                        isRinging: false,
+                        isOngoing: true,
+                        durationSeconds: self.callDurationSeconds
+                    )
+                }
+            } else {
+                // Ringing (Incoming or Outgoing Dialing)
+                if !self.isRinging {
+                    self.isRinging = true
+                    self.isOngoing = false
+                    self.callerName = call.isOutgoing ? "Outgoing Call" : "Incoming Call"
+                    self.detectConnectedAudioDevice()
+                    TripperDashClient.shared.log("📞 \(self.callerName) detected — projecting to TFT Dash!")
+                    TripperDashClient.shared.sendCallAlert(
+                        callerName: self.callerName,
+                        isRinging: true,
+                        isOngoing: false,
+                        durationSeconds: 0
+                    )
+                }
+            }
+        }
+    }
+    #endif
+    
+    private func startCallTimer() {
+        stopCallTimer()
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + 1.0, repeating: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.isOngoing else { return }
+            DispatchQueue.main.async {
+                self.callDurationSeconds += 1
+                TripperDashClient.shared.sendCallAlert(
+                    callerName: self.callerName,
+                    isRinging: false,
+                    isOngoing: true,
+                    durationSeconds: self.callDurationSeconds
+                )
+            }
+        }
+        timer.resume()
+        self.callDurationTimer = timer
     }
     
     private func stopCallTimer() {
-        callTimer?.invalidate()
-        callTimer = nil
+        callDurationTimer?.cancel()
+        callDurationTimer = nil
         callDurationSeconds = 0
     }
     
@@ -75,7 +171,6 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 self.callController.request(transaction) { error in
                     if let error = error {
                         DispatchQueue.main.async {
-                            // iOS restricts third-party apps from answering carrier cellular calls via CallKit
                             self.statusNote = "Carrier calls answer via Bluetooth headset/intercom"
                             TripperDashClient.shared.log("ℹ️ iOS CallKit note: \(error.localizedDescription)")
                         }
@@ -192,51 +287,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
 #if os(iOS)
 extension CallHandlingService: CXCallObserverDelegate {
     public func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
-        activeCallUUID = call.uuid
-        isSimulatedCall = false
-        
-        if call.hasEnded {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                isRinging = false
-                isOngoing = false
-                statusNote = nil
-            }
-            stopCallTimer()
-            TripperDashClient.shared.sendCallAlert(
-                callerName: callerName,
-                isRinging: false,
-                isOngoing: false,
-                durationSeconds: 0
-            )
-        } else if call.hasConnected {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                isRinging = false
-                isOngoing = true
-                statusNote = nil
-            }
-            startCallTimer()
-            detectConnectedAudioDevice()
-            TripperDashClient.shared.sendCallAlert(
-                callerName: callerName,
-                isRinging: false,
-                isOngoing: true,
-                durationSeconds: callDurationSeconds
-            )
-        } else if !call.isOutgoing {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                isRinging = true
-                isOngoing = false
-                callerName = "Incoming Call"
-                statusNote = nil
-            }
-            detectConnectedAudioDevice()
-            TripperDashClient.shared.sendCallAlert(
-                callerName: callerName,
-                isRinging: true,
-                isOngoing: false,
-                durationSeconds: 0
-            )
-        }
+        syncSystemCallState(call)
     }
 }
 #endif

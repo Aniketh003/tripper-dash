@@ -87,6 +87,9 @@ struct TripperDashApp: App {
                 // Global Apple Dynamic Island-style Live Overlays (Calls & Volume HUD)
                 GlobalLiveHUD(call: appState.call, media: appState.media)
             }
+            .onOpenURL { url in
+                SpotifyService.shared.handleCallbackURL(url)
+            }
         }
     }
 }

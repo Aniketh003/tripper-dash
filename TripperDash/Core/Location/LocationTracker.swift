@@ -4,6 +4,7 @@ import Combine
 
 @Observable
 public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchecked Sendable {
+    public static var shared: LocationTracker?
     private let locationManager = CLLocationManager()
     
     // Live Telemetry
@@ -31,6 +32,7 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
     
     public override init() {
         super.init()
+        LocationTracker.shared = self
         setupLocationManager()
     }
     
@@ -43,6 +45,24 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         #if os(iOS)
         locationManager.showsBackgroundLocationIndicator = true
         #endif
+    }
+    
+    /// Enables or disables continuous background location execution so iOS never suspends
+    /// the app while connected to the motorcycle's TFT Dash (even when switching to Spotify or locking the phone).
+    public func setBackgroundKeepAlive(_ active: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            #if os(iOS)
+            self.locationManager.allowsBackgroundLocationUpdates = active || self.isRecordingRide
+            self.locationManager.pausesLocationUpdatesAutomatically = false
+            #endif
+            if active {
+                self.locationManager.startUpdatingLocation()
+                #if os(iOS)
+                self.locationManager.startUpdatingHeading()
+                #endif
+            }
+        }
     }
     
     public func requestPermissions() {
@@ -102,7 +122,9 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         timer = nil
         
         #if os(iOS)
-        locationManager.allowsBackgroundLocationUpdates = false
+        if TripperDashClient.shared.connectionState != .connected {
+            locationManager.allowsBackgroundLocationUpdates = false
+        }
         #endif
         
         let endTime = Date()

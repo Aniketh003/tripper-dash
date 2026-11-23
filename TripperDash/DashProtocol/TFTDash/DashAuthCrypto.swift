@@ -54,13 +54,12 @@ public enum DashAuthCrypto {
         return ciphertext
     }
     
-    /// Encrypts plaintext using AES-256-CBC with PKCS#7 padding under the 32-byte session key.
-    /// Returns [16-byte random IV ‖ ciphertext], required for TLV 05 22 (Caller Name on Dash).
+    /// Encrypts plaintext using AES-256-CBC with PKCS#7 padding and 16-byte zero IV under the 32-byte session key.
+    /// Returns the pure 16/32-byte ciphertext block required for TLV 05 22 (Caller Name on Dash).
     public static func aesEncryptCBC(plaintext: Data, aesKey: Data) -> Data? {
         #if canImport(CommonCrypto)
         guard aesKey.count == kCCKeySizeAES256 else { return nil }
-        var iv = Data(count: kCCBlockSizeAES128)
-        _ = iv.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, kCCBlockSizeAES128, $0.baseAddress!) }
+        let iv = Data(count: kCCBlockSizeAES128) // 16 zero bytes matching Royal Enfield K1G firmware
         
         let outCapacity = plaintext.count + kCCBlockSizeAES128
         var outBuffer = Data(count: outCapacity)
@@ -85,9 +84,7 @@ public enum DashAuthCrypto {
             }
         }
         guard status == kCCSuccess else { return nil }
-        var result = iv
-        result.append(outBuffer.prefix(numBytesEncrypted))
-        return result
+        return Data(outBuffer.prefix(numBytesEncrypted))
         #else
         return nil
         #endif

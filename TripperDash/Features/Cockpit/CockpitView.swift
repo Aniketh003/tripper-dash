@@ -6,11 +6,13 @@ public struct CockpitView: View {
     @Bindable var dashClient: TripperDashClient
     @Bindable var podClient: TripperPodClient = TripperPodClient.shared
     @Bindable var media: MediaPlaybackService = MediaPlaybackService.shared
+    @Bindable var spotify: SpotifyService = SpotifyService.shared
     @Bindable var call: CallHandlingService = CallHandlingService.shared
     @Bindable var battery: BatteryOptimizationService = BatteryOptimizationService.shared
     @Bindable var weather: WeatherService = WeatherService.shared
     @Bindable var projection: TFTProjectionService = TFTProjectionService.shared
     
+    @State private var showingSpotifySheet = false
     let onRideSaved: (RideRecord) -> Void
     
     public init(
@@ -224,9 +226,52 @@ public struct CockpitView: View {
                         }
                         .padding(.horizontal, 20)
                         
-                        // Refined Apple Music-Style Now Playing & Volume Card
+                        // Refined Apple Music & Spotify Now Playing & Volume Card
                         GlassCard(padding: 16) {
                             VStack(spacing: 14) {
+                                // Top bar: Music Provider Switcher (Spotify Primary!) + Link Button
+                                HStack(spacing: 8) {
+                                    ForEach(MusicProvider.allCases, id: \.self) { provider in
+                                        let isSelected = (media.preferredProvider == provider)
+                                        Button(action: {
+                                            media.preferredProvider = provider
+                                        }) {
+                                            HStack(spacing: 5) {
+                                                Circle()
+                                                    .fill(provider == .spotify ? AppTheme.emerald : AppTheme.coral)
+                                                    .frame(width: 6, height: 6)
+                                                Text(provider.rawValue)
+                                                    .font(.system(size: 11, weight: .semibold))
+                                            }
+                                            .foregroundColor(isSelected ? .black : AppTheme.textSecondary)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 5)
+                                            .background(isSelected ? Color.white : AppTheme.surfaceElevated)
+                                            .clipShape(Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if media.preferredProvider == .spotify {
+                                        Button(action: { showingSpotifySheet = true }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: spotify.isConnected ? "checkmark.circle.fill" : "link.badge.plus")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                Text(spotify.isConnected ? "Spotify Linked" : "Link Spotify")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                            }
+                                            .foregroundColor(spotify.isConnected ? AppTheme.emerald : AppTheme.accent)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 5)
+                                            .background(AppTheme.surfaceElevated)
+                                            .clipShape(Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                
                                 HStack(spacing: 12) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -234,7 +279,7 @@ public struct CockpitView: View {
                                             .frame(width: 42, height: 42)
                                         Image(systemName: media.isPlaying ? "waveform" : "music.note")
                                             .font(.system(size: 16, weight: .semibold))
-                                            .foregroundColor(media.isPlaying ? AppTheme.accent : AppTheme.textSecondary)
+                                            .foregroundColor(media.isPlaying ? (media.preferredProvider == .spotify ? AppTheme.emerald : AppTheme.accent) : AppTheme.textSecondary)
                                     }
                                     
                                     VStack(alignment: .leading, spacing: 2) {
@@ -243,7 +288,7 @@ public struct CockpitView: View {
                                             .foregroundColor(AppTheme.textPrimary)
                                             .lineLimit(1)
                                         
-                                        Text(media.currentArtist.isEmpty ? "Handlebar Joystick Linked" : media.currentArtist)
+                                        Text(media.currentArtist.isEmpty ? "\(media.preferredProvider.rawValue) · Handlebar Linked" : media.currentArtist)
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundColor(AppTheme.textSecondary)
                                             .lineLimit(1)
@@ -344,6 +389,9 @@ public struct CockpitView: View {
                 }
             }
             .navigationBarHidden(true)
+            .sheet(isPresented: $showingSpotifySheet) {
+                SpotifyConnectSheet()
+            }
             .onAppear {
                 weather.refresh(for: tracker.currentLocation)
                 media.updateCurrentTrack(silentIfUnchanged: true)
@@ -366,5 +414,135 @@ public struct CockpitView: View {
     
     private func isConnecting(_ state: DashConnectionState) -> Bool {
         state == .verifyingNetwork || state == .requestingAuth || state == .exchangingKeys
+    }
+}
+
+// MARK: - Spotify 1-Tap OAuth PKCE Connect Sheet
+public struct SpotifyConnectSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var spotify: SpotifyService = SpotifyService.shared
+    @State private var copiedURI: Bool = false
+    
+    public init() {}
+    
+    public var body: some View {
+        NavigationStack {
+            ZStack {
+                AppTheme.background.ignoresSafeArea()
+                
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        // Status Banner
+                        GlassCard {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(spotify.isConnected ? AppTheme.emerald : AppTheme.accent)
+                                    .frame(width: 10, height: 10)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(spotify.isConnected ? "Spotify Connected" : "Connect Spotify for Live Track Titles & Skip")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(AppTheme.textPrimary)
+                                    
+                                    Text(spotify.isConnected ? "Live track metadata & handlebar Next/Prev/Play/Pause active in background." : "Enables background song titles and handlebar skip on iOS.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        
+                        // Quick Setup Instructions + Client ID Field
+                        GlassCard {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("1-Time Spotify Setup (30 Seconds)")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(AppTheme.textPrimary)
+                                
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("1. Open developer.spotify.com/dashboard and tap Create App.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                    
+                                    HStack {
+                                        Text("2. Paste Redirect URI: ")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                        Text(SpotifyService.redirectURI)
+                                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                            .foregroundColor(AppTheme.emerald)
+                                        Spacer()
+                                        Button(copiedURI ? "Copied" : "Copy") {
+                                            #if os(iOS)
+                                            UIPasteboard.general.string = SpotifyService.redirectURI
+                                            #endif
+                                            copiedURI = true
+                                        }
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(AppTheme.accent)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(AppTheme.surfaceElevated)
+                                        .clipShape(Capsule())
+                                    }
+                                    
+                                    Text("3. Copy your Client ID and paste it below:")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                }
+                                
+                                TextField("Paste Spotify Client ID", text: $spotify.clientId)
+                                    .font(.system(size: 14, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .autocorrectionDisabled()
+                                    #if os(iOS)
+                                    .textInputAutocapitalization(.never)
+                                    #endif
+                                    .padding(12)
+                                    .background(AppTheme.surfaceElevated)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                
+                                if !spotify.authStatusMessage.isEmpty {
+                                    Text(spotify.authStatusMessage)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(spotify.isConnected ? AppTheme.emerald : AppTheme.accent)
+                                }
+                                
+                                MinimalButton(
+                                    title: spotify.isConnected ? "Reconnect Spotify" : "Authorize with Spotify",
+                                    icon: "music.note.list",
+                                    isProminent: true,
+                                    tint: AppTheme.emerald
+                                ) {
+                                    spotify.startAuthorization()
+                                }
+                                
+                                if spotify.isConnected {
+                                    Button("Disconnect Spotify") {
+                                        spotify.disconnect()
+                                    }
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(AppTheme.coral)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.top, 4)
+                                }
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Spotify Integration")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(AppTheme.accent)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }

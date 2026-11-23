@@ -7,9 +7,21 @@ import AVFoundation
 import UIKit
 #endif
 
+public enum MusicProvider: String, CaseIterable, Sendable {
+    case spotify = "Spotify"
+    case appleMusic = "Apple Music"
+}
+
 @Observable
 public final class MediaPlaybackService: @unchecked Sendable {
     public static let shared = MediaPlaybackService()
+    
+    public var preferredProvider: MusicProvider = .spotify {
+        didSet {
+            UserDefaults.standard.set(preferredProvider.rawValue, forKey: "pref_music_provider")
+            updateCurrentTrack(silentIfUnchanged: false)
+        }
+    }
     
     public var currentTitle: String = "Not Playing"
     public var currentArtist: String = ""
@@ -22,20 +34,27 @@ public final class MediaPlaybackService: @unchecked Sendable {
     public var showVolumeHUD: Bool = false
     
     #if os(iOS)
-    private let player = MPMusicPlayerController.systemMusicPlayer
+    private let appleMusicPlayer = MPMusicPlayerController.systemMusicPlayer
     fileprivate weak var mountedSlider: UISlider?
     private var volumeObservation: NSKeyValueObservation?
     
-    // Dynamic MediaRemote bridge for system-wide playback (Spotify, YouTube Music, Apple Music) on sideloaded builds
+    // Dynamic MediaRemote bridge
     private typealias MRMediaRemoteSendCommandFn = @convention(c) (UInt32, AnyObject?) -> Bool
     private typealias MRMediaRemoteGetNowPlayingInfoFn = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+    private typealias MRMediaRemoteRegisterNotificationsFn = @convention(c) (DispatchQueue) -> Void
     private var mrSendCommand: MRMediaRemoteSendCommandFn?
     private var mrGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfoFn?
+    private var mrRegisterNotifications: MRMediaRemoteRegisterNotificationsFn?
     #endif
     private var hudDismissWorkItem: DispatchWorkItem?
-    private var pollTimer: Timer?
+    private var pollTimer: DispatchSourceTimer?
+    private let pollQueue = DispatchQueue(label: "com.tripperdash.mediapoll", qos: .utility)
     
     private init() {
+        if let saved = UserDefaults.standard.string(forKey: "pref_music_provider"),
+           let provider = MusicProvider(rawValue: saved) {
+            self.preferredProvider = provider
+        }
         #if os(iOS)
         setupMediaRemoteBridge()
         setupAudioSessionAndVolumeObserver()
@@ -55,6 +74,10 @@ public final class MediaPlaybackService: @unchecked Sendable {
         if let symInfo = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
             mrGetNowPlayingInfo = unsafeBitCast(symInfo, to: MRMediaRemoteGetNowPlayingInfoFn.self)
         }
+        if let symReg = dlsym(handle, "MRMediaRemoteRegisterForNowPlayingNotifications") {
+            mrRegisterNotifications = unsafeBitCast(symReg, to: MRMediaRemoteRegisterNotificationsFn.self)
+            mrRegisterNotifications?(DispatchQueue.main)
+        }
     }
     
     private func setupAudioSessionAndVolumeObserver() {
@@ -70,7 +93,6 @@ public final class MediaPlaybackService: @unchecked Sendable {
         self.currentVolume = initialVol
         self.volumePercent = Int(round(initialVol * 100))
         
-        // Observe live hardware & programmatic volume changes
         volumeObservation = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
             guard let self = self, let newVol = change.newValue else { return }
             DispatchQueue.main.async {
@@ -82,28 +104,48 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
     
     private func setupMediaObservers() {
-        player.beginGeneratingPlaybackNotifications()
+        appleMusicPlayer.beginGeneratingPlaybackNotifications()
         
         NotificationCenter.default.addObserver(
             forName: .MPMusicPlayerControllerNowPlayingItemDidChange,
-            object: player,
+            object: appleMusicPlayer,
             queue: .main
         ) { [weak self] _ in
+            guard self?.preferredProvider == .appleMusic else { return }
             self?.updateCurrentTrack()
         }
         
         NotificationCenter.default.addObserver(
             forName: .MPMusicPlayerControllerPlaybackStateDidChange,
-            object: player,
+            object: appleMusicPlayer,
             queue: .main
         ) { [weak self] _ in
+            guard self?.preferredProvider == .appleMusic else { return }
             self?.updateCurrentTrack()
         }
         
-        // Periodic lightweight sync so external player track changes (Spotify / YouTube Music / Lock Screen) stay realtime
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        // Observe MediaRemote notifications if delivered by iOS
+        for name in [
+            "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+            "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification"
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name(name),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.updateCurrentTrack(silentIfUnchanged: true)
+            }
+        }
+        
+        // Background-safe GCD timer (continues polling Spotify / MediaRemote even when app is in background!)
+        let timer = DispatchSource.makeTimerSource(queue: pollQueue)
+        timer.schedule(deadline: .now() + 1.5, repeating: .milliseconds(2000))
+        timer.setEventHandler { [weak self] in
             self?.updateCurrentTrack(silentIfUnchanged: true)
         }
+        timer.resume()
+        self.pollTimer = timer
     }
     
     fileprivate func attachSlider(_ slider: UISlider) {
@@ -119,37 +161,79 @@ public final class MediaPlaybackService: @unchecked Sendable {
             let prevArtist = self.currentArtist
             let prevPlaying = self.isPlaying
             
-            if let item = self.player.nowPlayingItem {
-                self.currentTitle = item.title ?? "Unknown Track"
-                self.currentArtist = item.artist ?? ""
-                self.currentAlbum = item.albumTitle ?? ""
-                self.isPlaying = (self.player.playbackState == .playing)
+            // 1. If user chose Apple Music explicitly (OR Apple Music is actively playing while Spotify is not connected)
+            if self.preferredProvider == .appleMusic {
+                if let item = self.appleMusicPlayer.nowPlayingItem {
+                    self.currentTitle = item.title ?? "Unknown Track"
+                    self.currentArtist = item.artist ?? ""
+                    self.currentAlbum = item.albumTitle ?? ""
+                    self.isPlaying = (self.appleMusicPlayer.playbackState == .playing)
+                } else {
+                    self.currentTitle = "Not Playing"
+                    self.currentArtist = ""
+                    self.currentAlbum = ""
+                    self.isPlaying = false
+                }
                 self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
-            } else if let getInfo = self.mrGetNowPlayingInfo {
-                // Query system MediaRemote daemon (captures Spotify, YouTube Music, Apple Music, etc.)
-                getInfo(DispatchQueue.main) { [weak self] info in
+                return
+            }
+            
+            // 2. Primary Mode: SPOTIFY
+            // First query Spotify Web API if linked (works 100% in background & foreground on all iOS versions)
+            let spotify = SpotifyService.shared
+            if spotify.isConnected {
+                spotify.fetchCurrentlyPlaying { [weak self] ok in
                     guard let self = self else { return }
-                    if let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String, !title.isEmpty {
-                        self.currentTitle = title
-                        self.currentArtist = (info["kMRMediaRemoteNowPlayingInfoArtist"] as? String) ?? ""
-                        self.currentAlbum = (info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String) ?? ""
-                        if let rate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double {
-                            self.isPlaying = rate > 0.01
-                        }
-                    } else if self.player.playbackState == .playing {
-                        self.isPlaying = true
-                    } else if self.currentTitle == "Not Playing" {
-                        self.isPlaying = false
+                    if ok && !spotify.trackTitle.isEmpty {
+                        self.currentTitle = spotify.trackTitle
+                        self.currentArtist = spotify.trackArtist
+                        self.currentAlbum = spotify.trackAlbum
+                        self.isPlaying = spotify.isPlaying
+                        self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+                    } else {
+                        self.queryMediaRemoteOrAudioSession(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
                     }
-                    self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
                 }
             } else {
-                self.isPlaying = (self.player.playbackState == .playing)
-                self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+                self.queryMediaRemoteOrAudioSession(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
             }
         }
         #endif
     }
+    
+    #if os(iOS)
+    private func queryMediaRemoteOrAudioSession(prevTitle: String, prevArtist: String, prevPlaying: Bool, silentIfUnchanged: Bool) {
+        let otherAudioPlaying = AVAudioSession.sharedInstance().isOtherAudioPlaying
+        
+        if let getInfo = self.mrGetNowPlayingInfo {
+            getInfo(DispatchQueue.main) { [weak self] info in
+                guard let self = self else { return }
+                if let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String, !title.isEmpty {
+                    self.currentTitle = title
+                    self.currentArtist = (info["kMRMediaRemoteNowPlayingInfoArtist"] as? String) ?? "Spotify"
+                    self.currentAlbum = (info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String) ?? ""
+                    if let rate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double {
+                        self.isPlaying = rate > 0.01
+                    } else {
+                        self.isPlaying = otherAudioPlaying
+                    }
+                } else {
+                    self.isPlaying = otherAudioPlaying
+                    if otherAudioPlaying && (self.currentTitle == "Not Playing" || self.currentTitle.isEmpty) {
+                        self.currentTitle = "Spotify Playing"
+                        self.currentArtist = "Link Spotify in App for Track Titles"
+                    } else if !otherAudioPlaying && self.currentTitle == "Spotify Playing" {
+                        self.currentTitle = "Spotify Paused"
+                    }
+                }
+                self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+            }
+        } else {
+            self.isPlaying = otherAudioPlaying
+            self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+        }
+    }
+    #endif
     
     private func commitTrackIfNeeded(prevTitle: String, prevArtist: String, prevPlaying: Bool, silentIfUnchanged: Bool) {
         let changed = (prevTitle != currentTitle) || (prevArtist != currentArtist) || (prevPlaying != isPlaying)
@@ -168,9 +252,8 @@ public final class MediaPlaybackService: @unchecked Sendable {
         TFTProjectionService.shared.triggerImmediateFrame()
     }
     
-    /// Schedules follow-up metadata checks after an async skip/play command so the new song title is always captured
     private func scheduleFollowUpTrackUpdates() {
-        for delay in [0.15, 0.35, 0.70] {
+        for delay in [0.25, 0.65, 1.25] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.updateCurrentTrack()
             }
@@ -184,26 +267,48 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
-                if self.player.playbackState == .playing {
-                    self.player.pause()
+            
+            if self.preferredProvider == .appleMusic {
+                if self.appleMusicPlayer.playbackState == .playing {
+                    self.appleMusicPlayer.pause()
                     self.isPlaying = false
                 } else {
-                    self.player.play()
+                    self.appleMusicPlayer.play()
                     self.isPlaying = true
                 }
-            } else if let sendCmd = self.mrSendCommand {
-                // Command 2 = kMRTogglePlayPause (works across Spotify, YouTube Music, Apple Music)
-                _ = sendCmd(2, nil)
-                self.isPlaying.toggle()
+                self.notifyDashMusicAndFrame()
+                self.scheduleFollowUpTrackUpdates()
+                return
+            }
+            
+            // SPOTIFY MODE (Never triggers Apple Music!)
+            let targetPlayState = !self.isPlaying
+            self.isPlaying = targetPlayState
+            self.notifyDashMusicAndFrame()
+            
+            let spotify = SpotifyService.shared
+            if spotify.isConnected {
+                let endpoint = targetPlayState ? "play" : "pause"
+                spotify.sendPlayerCommand(endpoint: endpoint, method: "PUT") { [weak self] ok in
+                    if !ok {
+                        _ = self?.mrSendCommand?(2, nil)
+                    }
+                    self?.scheduleFollowUpTrackUpdates()
+                }
+            } else {
+                let sent = self.mrSendCommand?(2, nil) ?? false
+                if !sent {
+                    // Fallback: Use AVAudioSession focus pulse to pause/resume external Spotify session
+                    self.toggleExternalAudioViaSessionFocus()
+                }
+                self.scheduleFollowUpTrackUpdates()
             }
             #else
             self.isPlaying.toggle()
+            self.notifyDashMusicAndFrame()
             #endif
             
-            TripperDashClient.shared.log(self.isPlaying ? "▶️ Music: Playing (\(self.currentTitle))" : "⏸️ Music: Paused")
-            self.notifyDashMusicAndFrame()
-            self.scheduleFollowUpTrackUpdates()
+            TripperDashClient.shared.log(self.isPlaying ? "▶️ Spotify: Play (\(self.currentTitle))" : "⏸️ Spotify: Pause")
         }
     }
     
@@ -212,15 +317,25 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
-                self.player.skipToNextItem()
-            } else if let sendCmd = self.mrSendCommand {
-                // Command 4 = kMRNextTrack
-                _ = sendCmd(4, nil)
+            
+            if self.preferredProvider == .appleMusic {
+                self.appleMusicPlayer.skipToNextItem()
+                self.scheduleFollowUpTrackUpdates()
+                return
+            }
+            
+            // SPOTIFY MODE
+            let spotify = SpotifyService.shared
+            if spotify.isConnected {
+                spotify.sendPlayerCommand(endpoint: "next", method: "POST") { [weak self] _ in
+                    self?.scheduleFollowUpTrackUpdates()
+                }
+            } else {
+                _ = self.mrSendCommand?(4, nil)
+                self.scheduleFollowUpTrackUpdates()
             }
             #endif
-            TripperDashClient.shared.log("⏭️ Music: Next Track")
-            self.scheduleFollowUpTrackUpdates()
+            TripperDashClient.shared.log("⏭️ Spotify: Next Track")
         }
     }
     
@@ -229,26 +344,55 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
-                if self.player.currentPlaybackTime > 3.5 {
-                    self.player.skipToBeginning()
+            
+            if self.preferredProvider == .appleMusic {
+                if self.appleMusicPlayer.currentPlaybackTime > 3.5 {
+                    self.appleMusicPlayer.skipToBeginning()
                 } else {
-                    self.player.skipToPreviousItem()
+                    self.appleMusicPlayer.skipToPreviousItem()
                 }
-            } else if let sendCmd = self.mrSendCommand {
-                // Command 5 = kMRPreviousTrack
-                _ = sendCmd(5, nil)
+                self.scheduleFollowUpTrackUpdates()
+                return
+            }
+            
+            // SPOTIFY MODE
+            let spotify = SpotifyService.shared
+            if spotify.isConnected {
+                spotify.sendPlayerCommand(endpoint: "previous", method: "POST") { [weak self] _ in
+                    self?.scheduleFollowUpTrackUpdates()
+                }
+            } else {
+                _ = self.mrSendCommand?(5, nil)
+                self.scheduleFollowUpTrackUpdates()
             }
             #endif
-            TripperDashClient.shared.log("⏮️ Music: Previous Track")
-            self.scheduleFollowUpTrackUpdates()
+            TripperDashClient.shared.log("⏮️ Spotify: Previous Track")
         }
     }
     
-    // MARK: - System Media Volume Control (Handlebar Joystick Up / Down)
+    #if os(iOS)
+    /// Toggles external audio app (Spotify) play/pause by pulsing non-mixable audio session focus
+    /// and releasing with `.notifyOthersOnDeactivation`.
+    private func toggleExternalAudioViaSessionFocus() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+                try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try? session.setActive(true)
+            }
+        } catch {
+            print("Audio focus toggle error: \(error)")
+        }
+    }
+    #endif
+    
+    // MARK: - System Media Volume Control (Handlebar Joystick Up / Down — Works for Spotify & All Apps!)
     
     public func volumeUp() {
-        adjustVolume(by: 0.0625) // Exact 1/16th step matching iPhone hardware buttons
+        adjustVolume(by: 0.0625)
     }
     
     public func volumeDown() {

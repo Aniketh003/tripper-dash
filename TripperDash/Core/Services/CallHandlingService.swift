@@ -49,39 +49,92 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
     // MARK: - Handlebar & In-App Call Actions
     
     public func endOrRejectCall() {
-        #if os(iOS)
-        guard let uuid = activeCallUUID else { return }
-        let endAction = CXEndCallAction(call: uuid)
-        let transaction = CXTransaction(action: endAction)
+        TripperDashClient.shared.log("📞 Call Rejected / Ended")
         
-        callController.request(transaction) { error in
-            if let error = error {
-                print("Failed to end call: \(error)")
+        #if os(iOS)
+        if let uuid = activeCallUUID {
+            let endAction = CXEndCallAction(call: uuid)
+            let transaction = CXTransaction(action: endAction)
+            callController.request(transaction) { error in
+                if let error = error {
+                    print("Notice: CXEndCallAction returned \(error)")
+                }
             }
         }
-        #else
-        isRinging = false
-        isOngoing = false
         #endif
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isRinging = false
+            self.isOngoing = false
+            #if os(iOS)
+            self.callTimer?.invalidate()
+            self.callTimer = nil
+            #endif
+            self.callDurationSeconds = 0
+            
+            TripperDashClient.shared.sendCallAlert(
+                callerName: self.callerName,
+                isRinging: false,
+                isOngoing: false,
+                durationSeconds: 0
+            )
+        }
     }
     
     public func answerCall() {
-        #if os(iOS)
-        guard let uuid = activeCallUUID else { return }
-        let answerAction = CXAnswerCallAction(call: uuid)
-        let transaction = CXTransaction(action: answerAction)
+        TripperDashClient.shared.log("📞 Call Answered via Handlebar / Cockpit")
         
-        callController.request(transaction) { [weak self] error in
-            if error == nil {
-                self?.isRinging = false
-                self?.isOngoing = true
-                self?.detectConnectedAudioDevice()
+        #if os(iOS)
+        if let uuid = activeCallUUID {
+            let answerAction = CXAnswerCallAction(call: uuid)
+            let transaction = CXTransaction(action: answerAction)
+            callController.request(transaction) { error in
+                if let error = error {
+                    print("Notice: CXAnswerCallAction returned \(error)")
+                }
             }
         }
-        #else
-        isRinging = false
-        isOngoing = true
         #endif
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isRinging = false
+            self.isOngoing = true
+            #if os(iOS)
+            self.startCallTimer()
+            self.detectConnectedAudioDevice()
+            #endif
+            
+            TripperDashClient.shared.sendCallAlert(
+                callerName: self.callerName,
+                isRinging: false,
+                isOngoing: true,
+                durationSeconds: 0
+            )
+        }
+    }
+    
+    // MARK: - Simulated Call Trigger for Local Desk Testing
+    
+    public func simulateIncomingCall(caller: String = "John Doe (Mobile)") {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.callerName = caller
+            self.isRinging = true
+            self.isOngoing = false
+            self.callDurationSeconds = 0
+            self.detectConnectedAudioDevice()
+            
+            TripperDashClient.shared.sendCallAlert(
+                callerName: caller,
+                isRinging: true,
+                isOngoing: false,
+                durationSeconds: 0
+            )
+            TripperDashClient.shared.log("📞 [TEST] Incoming Call from: '\(caller)'")
+            TripperDashClient.shared.log("👉 Press Center Click (or Up) to Answer, Down to Reject")
+        }
     }
     
     // MARK: - Bluetooth Headset / Earphones Audio Route Detection

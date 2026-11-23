@@ -426,6 +426,12 @@ public final class TripperDashClient: @unchecked Sendable {
             case 0x18:
                 log("🎮 Handlebar Joystick: CENTER CLICK")
                 dispatchJoystick(.centerClick)
+            case 0x05:
+                log("🎮 Handlebar Joystick: UP")
+                dispatchJoystick(.up)
+            case 0xFE:
+                log("📞 Remote Command: Simulate Incoming Call")
+                CallHandlingService.shared.simulateIncomingCall(caller: "Royal Enfield Support")
             default:
                 log("🎮 Unknown button byte: 0x\(String(format: "%02X", buttonByte))")
             }
@@ -599,20 +605,37 @@ public final class TripperDashClient: @unchecked Sendable {
         let callService = CallHandlingService.shared
         let mediaService = MediaPlaybackService.shared
         
+        // Priority 1: Incoming / Ongoing Phone Calls
         if callService.isRinging {
-            if event == .centerClick || event == .up { callService.answerCall() }
-            else if event == .down { callService.endOrRejectCall() }
-            return
+            if event == .centerClick || event == .up {
+                log("📞 Answering incoming call via handlebar...")
+                callService.answerCall()
+                return
+            } else if event == .down {
+                log("📞 Rejecting incoming call via handlebar...")
+                callService.endOrRejectCall()
+                return
+            }
         } else if callService.isOngoing {
-            if event == .down || event == .centerClick { callService.endOrRejectCall() }
-            return
+            if event == .down || event == .centerClick {
+                log("📞 Ending ongoing call via handlebar...")
+                callService.endOrRejectCall()
+                return
+            }
         }
         
+        // Priority 2: Riding Controls (Music playback & Volume)
         switch event {
-        case .centerClick: mediaService.togglePlayPause()
-        case .right: mediaService.nextTrack()
-        case .left: mediaService.previousTrack()
-        default: break
+        case .centerClick:
+            mediaService.togglePlayPause()
+        case .right:
+            mediaService.nextTrack()
+        case .left:
+            mediaService.previousTrack()
+        case .up:
+            mediaService.volumeUp()
+        case .down:
+            mediaService.volumeDown()
         }
     }
     

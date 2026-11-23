@@ -245,11 +245,11 @@ public struct SettingsView: View {
                                         Divider().background(AppTheme.border)
                                         
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text("HANDLEBAR JOYSTICK TEST BUTTONS")
+                                            Text("HANDLEBAR JOYSTICK & CALL TEST CONTROLS")
                                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                                                 .foregroundColor(AppTheme.textTertiary)
                                             
-                                            HStack(spacing: 8) {
+                                            HStack(spacing: 6) {
                                                 Button("⏮️ Left") {
                                                     dashClient.simulateJoystickPress(.left)
                                                 }
@@ -279,12 +279,34 @@ public struct SettingsView: View {
                                                 .padding(.vertical, 6)
                                                 .background(AppTheme.surfaceElevated)
                                                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            }
+                                            
+                                            HStack(spacing: 6) {
+                                                Button("🔊 Vol + (Up)") {
+                                                    dashClient.simulateJoystickPress(.up)
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
                                                 
-                                                Button("📞 Down") {
+                                                Button("🔉 Vol - (Down)") {
                                                     dashClient.simulateJoystickPress(.down)
                                                 }
                                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                                                 .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                                
+                                                Button("📞 Ring Call") {
+                                                    CallHandlingService.shared.simulateIncomingCall(caller: "John Doe")
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(AppTheme.emerald)
                                                 .padding(.horizontal, 10)
                                                 .padding(.vertical, 6)
                                                 .background(AppTheme.surfaceElevated)

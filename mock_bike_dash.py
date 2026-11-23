@@ -49,7 +49,8 @@ class MockBikeDash:
         self.music_title = "None"
         self.music_artist = "None"
         self.call_caller = "None"
-        self.call_status = "Idle"
+        self.call_status = "IDLE ⚪"
+        self.music_status = "IDLE ⚪"
         self.heartbeat_count = 0
         self.last_seen_time = time.time()
         
@@ -160,9 +161,22 @@ class MockBikeDash:
                 t_idx = hex_data.find("05090002")
                 self.distance_total = int(hex_data[t_idx+8:t_idx+12], 16)
 
-        # 6. IDR Frame Decoded ACK (Bike must acknowledge video frames)
-        if "0906000155" in hex_data:
-            pass
+        # 6. Handle Call State (05210001XX: 31 = Ringing, 32 = Ongoing, 30 = Idle)
+        if "05210001" in hex_data:
+            idx = hex_data.find("05210001")
+            status_code = hex_data[idx+8:idx+10]
+            if status_code == "31":
+                self.call_status = "RINGING 📞"
+            elif status_code == "32":
+                self.call_status = "ONGOING 🟢"
+            else:
+                self.call_status = "IDLE ⚪"
+
+        # 7. Handle Music Play/Pause (054C0001XX: 18 = Playing, 10/15 = Paused)
+        if "054C0001" in hex_data:
+            idx = hex_data.find("054C0001")
+            m_vol = hex_data[idx+8:idx+10]
+            self.music_status = "PLAYING ▶️" if m_vol == "18" else "PAUSED ⏸️"
 
     def send_joystick(self, byte_val, name):
         """Sends handlebar joystick event to phone on port 2002."""
@@ -189,11 +203,17 @@ class MockBikeDash:
                 continue
             
             status_text = f"LINKED ({self.client_ip})" if (time.time() - self.last_seen_time < 4) else "DISCONNECTED"
-            sys.stdout.write(
-                f"\r🏍️  [TFT DASH] {status_text} | Dest: {self.destination_title[:20]} | "
-                f"Next: {self.maneuver} in {self.distance_turn}m (Total: {self.distance_total}m) | "
-                f"Heartbeats: {self.heartbeat_count}"
+            line = (
+                f"\r\033[K🏍️  [TFT DASH] {status_text} | Call: {self.call_status} | Music: {self.music_status} | "
+                f"Dest: {self.destination_title[:15]} | Heartbeats: {self.heartbeat_count}"
             )
+            try:
+                term_cols = os.get_terminal_size().columns
+                if len(line) - 5 > term_cols:
+                    line = line[:term_cols + 4]
+            except Exception:
+                pass
+            sys.stdout.write(line)
             sys.stdout.flush()
 
     def run(self):
@@ -211,12 +231,14 @@ class MockBikeDash:
         print(f"     Set 'Dash IP' to: {local_ip}")
         print(f"  3. Tap 'Connect' in the app.")
         print("=" * 68)
-        print("  Handlebar Joystick Controls (Type letter & press Enter):")
-        print("    [r] Right        -> Next Track")
-        print("    [l] Left         -> Previous Track")
-        print("    [c] Center Click -> Play / Pause (or Answer incoming call)")
-        print("    [d] Down         -> End / Reject call")
-        print("    [q] Quit")
+        print("  Handlebar Controls (Type letter & press Enter):")
+        print("    [r]    Right        -> Next Music Track")
+        print("    [l]    Left         -> Previous Music Track")
+        print("    [c]    Center Click -> Play / Pause (or Answer incoming call)")
+        print("    [u]    Up           -> Volume UP (or Answer incoming call)")
+        print("    [d]    Down         -> Volume DOWN (or Reject / End call)")
+        print("    [call] Test Call    -> Trigger simulated incoming call on phone")
+        print("    [q]    Quit")
         print("=" * 68)
         print("Waiting for iPhone connection...\n")
 
@@ -240,13 +262,16 @@ class MockBikeDash:
                 elif cmd == 'c':
                     self.send_joystick(0x18, "CENTER (Play/Pause/Answer)")
                 elif cmd == 'd':
-                    self.send_joystick(0x15, "DOWN (End Call)")
+                    self.send_joystick(0x15, "DOWN (Vol Down / End Call)")
                 elif cmd == 'u':
-                    self.send_joystick(0x05, "UP")
+                    self.send_joystick(0x05, "UP (Vol Up / Answer Call)")
+                elif cmd == 'call':
+                    self.send_joystick(0xFE, "SIMULATE INCOMING CALL")
+                    print("📞 [Simulator] Triggered incoming call on iPhone from 'Royal Enfield Support'!")
                 elif cmd == '':
                     pass
                 else:
-                    print(f"Unknown command '{cmd}'. Available: [r], [l], [c], [d], [q]")
+                    print(f"Unknown command '{cmd}'. Available: [r], [l], [c], [u], [d], [call], [q]")
             except (KeyboardInterrupt, EOFError):
                 break
 

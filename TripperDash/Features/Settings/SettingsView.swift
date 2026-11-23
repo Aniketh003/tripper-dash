@@ -16,7 +16,6 @@ public struct SettingsView: View {
     @State private var ssidInput = ""
     @State private var ipInput = ""
     @State private var showDiagnostics = false
-    @State private var pendingWallpaperCrop: WallpaperCropPayload? = nil
     #if canImport(PhotosUI)
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     #endif
@@ -306,7 +305,7 @@ public struct SettingsView: View {
                                                 HStack(spacing: 6) {
                                                     Image(systemName: "photo.badge.plus")
                                                         .font(.system(size: 13, weight: .semibold))
-                                                    Text(dashClient.hasCustomWallpaper ? "Change Photo" : "Add Wallpaper from Photos")
+                                                    Text(dashClient.hasCustomWallpaper ? "Change Wallpaper Photo" : "Add Wallpaper from Photos")
                                                         .font(.system(size: 13, weight: .semibold))
                                                 }
                                                 .foregroundColor(.black)
@@ -320,34 +319,12 @@ public struct SettingsView: View {
                                                 guard let newItem = newItem else { return }
                                                 Task {
                                                     if let data = try? await newItem.loadTransferable(type: Data.self) {
-                                                        await MainActor.run {
-                                                            pendingWallpaperCrop = WallpaperCropPayload(data: data)
-                                                            selectedPhotoItem = nil
-                                                        }
+                                                        dashClient.saveCustomWallpaperData(data)
                                                     }
                                                 }
                                             }
                                             
                                             if dashClient.hasCustomWallpaper {
-                                                Button(action: {
-                                                    if let data = dashClient.loadEditableWallpaperData() {
-                                                        pendingWallpaperCrop = WallpaperCropPayload(data: data)
-                                                    }
-                                                }) {
-                                                    HStack(spacing: 5) {
-                                                        Image(systemName: "crop")
-                                                            .font(.system(size: 13, weight: .semibold))
-                                                        Text("Crop")
-                                                            .font(.system(size: 13, weight: .semibold))
-                                                    }
-                                                    .foregroundColor(AppTheme.textPrimary)
-                                                    .padding(.horizontal, 14)
-                                                    .padding(.vertical, 10)
-                                                    .background(AppTheme.surfaceElevated)
-                                                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                                }
-                                                .buttonStyle(.plain)
-                                                
                                                 Button(action: { dashClient.clearCustomWallpaper() }) {
                                                     Image(systemName: "trash")
                                                         .font(.system(size: 13, weight: .semibold))
@@ -553,9 +530,6 @@ public struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .sheet(item: $pendingWallpaperCrop) { payload in
-                TFTWallpaperCropperSheet(rawImageData: payload.data)
-            }
             .alert("Sign In", isPresented: $showingEmailSignIn) {
                 TextField("Email address", text: $emailInput)
                     .keyboardType(.emailAddress)

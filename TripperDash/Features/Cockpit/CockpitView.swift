@@ -16,6 +16,7 @@ public struct CockpitView: View {
     @Bindable var projection: TFTProjectionService = TFTProjectionService.shared
     
     @State private var showingSpotifySheet = false
+    @State private var pendingWallpaperCrop: WallpaperCropPayload? = nil
     #if canImport(PhotosUI)
     @State private var cockpitWallpaperItem: PhotosPickerItem? = nil
     #endif
@@ -176,7 +177,7 @@ public struct CockpitView: View {
                                     HStack(spacing: 4) {
                                         Image(systemName: "photo.on.rectangle.angled")
                                             .font(.system(size: 10, weight: .semibold))
-                                        Text(dashClient.hasCustomWallpaper ? "Wallpaper" : "Add Wallpaper")
+                                        Text(dashClient.hasCustomWallpaper ? "Change Photo" : "Add Wallpaper")
                                             .font(.system(size: 11, weight: .semibold))
                                     }
                                     .foregroundColor(AppTheme.accent)
@@ -190,9 +191,33 @@ public struct CockpitView: View {
                                     guard let newItem = newItem else { return }
                                     Task {
                                         if let data = try? await newItem.loadTransferable(type: Data.self) {
-                                            dashClient.saveCustomWallpaperData(data)
+                                            await MainActor.run {
+                                                pendingWallpaperCrop = WallpaperCropPayload(data: data)
+                                                cockpitWallpaperItem = nil
+                                            }
                                         }
                                     }
+                                }
+                                
+                                if dashClient.hasCustomWallpaper {
+                                    Button(action: {
+                                        if let data = dashClient.loadEditableWallpaperData() {
+                                            pendingWallpaperCrop = WallpaperCropPayload(data: data)
+                                        }
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "crop")
+                                                .font(.system(size: 10, weight: .semibold))
+                                            Text("Crop")
+                                                .font(.system(size: 11, weight: .semibold))
+                                        }
+                                        .foregroundColor(AppTheme.textPrimary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                        .background(AppTheme.surfaceElevated)
+                                        .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                                 #endif
                                 
@@ -421,6 +446,9 @@ public struct CockpitView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showingSpotifySheet) {
                 SpotifyConnectSheet()
+            }
+            .sheet(item: $pendingWallpaperCrop) { payload in
+                TFTWallpaperCropperSheet(rawImageData: payload.data)
             }
             .onAppear {
                 weather.refresh(for: tracker.currentLocation)

@@ -152,15 +152,36 @@ public final class TripperDashClient: @unchecked Sendable {
         return docs.appendingPathComponent("tft_custom_wallpaper.jpg")
     }
     
-    public func saveCustomWallpaperData(_ data: Data) {
+    public static var customWallpaperRawFileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("tft_custom_wallpaper_raw.jpg")
+    }
+    
+    /// Loads the original uncropped wallpaper data if available, falling back to the active cropped wallpaper data.
+    public func loadEditableWallpaperData() -> Data? {
+        if FileManager.default.fileExists(atPath: Self.customWallpaperRawFileURL.path),
+           let raw = try? Data(contentsOf: Self.customWallpaperRawFileURL) {
+            return raw
+        }
+        if FileManager.default.fileExists(atPath: Self.customWallpaperFileURL.path),
+           let cropped = try? Data(contentsOf: Self.customWallpaperFileURL) {
+            return cropped
+        }
+        return nil
+    }
+    
+    public func saveCustomWallpaperData(_ data: Data, rawData: Data? = nil) {
         do {
             try data.write(to: Self.customWallpaperFileURL, options: .atomic)
+            if let rawData = rawData {
+                try? rawData.write(to: Self.customWallpaperRawFileURL, options: .atomic)
+            }
             DispatchQueue.main.async {
                 self.hasCustomWallpaper = true
                 self.wallpaperStyle = .customPhoto
                 TFTProjectionService.shared.reloadCustomWallpaperCache()
                 TFTProjectionService.shared.triggerImmediateFrame()
-                self.log("🖼️ Saved custom TFT Homescreen wallpaper.")
+                self.log("🖼️ Saved cropped TFT Homescreen wallpaper (526×300 dome).")
             }
         } catch {
             log("⚠️ Failed to save wallpaper: \(error.localizedDescription)")
@@ -169,6 +190,7 @@ public final class TripperDashClient: @unchecked Sendable {
     
     public func clearCustomWallpaper() {
         try? FileManager.default.removeItem(at: Self.customWallpaperFileURL)
+        try? FileManager.default.removeItem(at: Self.customWallpaperRawFileURL)
         DispatchQueue.main.async {
             self.hasCustomWallpaper = false
             if self.wallpaperStyle == .customPhoto {

@@ -30,6 +30,9 @@
 		A10021 /* RidesHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021 /* RidesHistoryView.swift */; };
 		A10022 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* SettingsView.swift */; };
 		A10023 /* BackgroundKeepAliveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* BackgroundKeepAliveService.swift */; };
+		A10024 /* MediaPlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* MediaPlaybackService.swift */; };
+		A10025 /* CallHandlingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* CallHandlingService.swift */; };
+		A10026 /* BatteryOptimizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* BatteryOptimizationService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +61,9 @@
 		B10021 /* RidesHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RidesHistoryView.swift; sourceTree = "<group>"; };
 		B10022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10023 /* BackgroundKeepAliveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BackgroundKeepAliveService.swift; sourceTree = "<group>"; };
+		B10024 /* MediaPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MediaPlaybackService.swift; sourceTree = "<group>"; };
+		B10025 /* CallHandlingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CallHandlingService.swift; sourceTree = "<group>"; };
+		B10026 /* BatteryOptimizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BatteryOptimizationService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +115,9 @@
 				B10005 /* PolylineDecoder.swift */,
 				B10006 /* RouteService.swift */,
 				B10023 /* BackgroundKeepAliveService.swift */,
+				B10024 /* MediaPlaybackService.swift */,
+				B10025 /* CallHandlingService.swift */,
+				B10026 /* BatteryOptimizationService.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -249,6 +258,9 @@
 				A10021 /* RidesHistoryView.swift in Sources */,
 				A10022 /* SettingsView.swift in Sources */,
 				A10023 /* BackgroundKeepAliveService.swift in Sources */,
+				A10024 /* MediaPlaybackService.swift in Sources */,
+				A10025 /* CallHandlingService.swift in Sources */,
+				A10026 /* BatteryOptimizationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

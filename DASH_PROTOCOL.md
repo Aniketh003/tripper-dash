@@ -52,13 +52,21 @@ The dash and phone exchange framed binary packets structured with standard comma
      - Distance to next maneuver (in meters or feet).
      - Road name / Destination label.
      - Phone battery percentage & GPS lock status.
-5. **Joystick Input (Dash → Phone)**:
-   - When the rider moves the left handlebar 5-way joystick (Up, Down, Left, Right, Center Click), the dash emits UDP packets on port 2002 to the phone.
-   - Event bytes:
-     - `0x01`: Left
-     - `0x02`: Right
-     - `0x03`: Down
-     - `0x04`: Center Click / Enter
+5. **Music Display & Controls (`0x21` command)**:
+   - Streams song title, artist, and play/pause status to the dash gold band.
+   - Handlebar joystick controls:
+     - `Right` (`0x02`): Next Track
+     - `Left` (`0x01`): Previous Track
+     - `Center Click` (`0x04`): Play / Pause Toggle
+6. **Incoming Call Alerts & Answering (`0x22` command)**:
+   - Overlays caller name and ringing animation on the motorcycle TFT cluster.
+   - Rider can answer or decline directly with the left handlebar joystick:
+     - `Center Click` (`0x04`) or `Up` (`0x05`): **Answer Call**
+     - `Down` (`0x03`): **Decline / End Call**
+   - Audio routes seamlessly through whatever the rider is using: Bluetooth helmet headset (Cardo, Sena, BluArmor), AirPods, or iPhone receiver.
+7. **Adaptive Battery Efficiency (Screen-Off Mode)**:
+   - When the phone screen turns off, UI render calls drop to 0 FPS.
+   - GPS accuracy dynamically relaxes when stopped at red lights (>20s stationary) cutting baseband drain by ~55%, and re-engages instant high-precision tracking the moment motion resumes.
 
 ### Video Projection Stream (UDP/5000)
 - **Container**: Raw RTP (Real-time Transport Protocol) payload.

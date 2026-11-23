@@ -4,6 +4,9 @@ public struct CockpitView: View {
     @Bindable var tracker: LocationTracker
     @Bindable var vehicleStore: VehicleStore
     @Bindable var dashClient: TripperDashClient
+    @Bindable var media: MediaPlaybackService = MediaPlaybackService.shared
+    @Bindable var call: CallHandlingService = CallHandlingService.shared
+    @Bindable var battery: BatteryOptimizationService = BatteryOptimizationService.shared
     let onRideSaved: (RideRecord) -> Void
     
     public init(
@@ -24,8 +27,8 @@ public struct CockpitView: View {
                 AppTheme.background.ignoresSafeArea()
                 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 20) {
-                        // Top Status Bar: Vehicle & Dash Link
+                    VStack(spacing: 16) {
+                        // Top Status Bar: Vehicle, Battery ECO & Dash Link
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(vehicleStore.activeVehicle.title.uppercased())
@@ -40,23 +43,90 @@ public struct CockpitView: View {
                             
                             Spacer()
                             
-                            // Hardware Connection Pill
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(dashClient.connectionState == .connected ? AppTheme.emerald : AppTheme.textTertiary)
-                                    .frame(width: 8, height: 8)
+                            // Battery & Hardware Connection Pills
+                            HStack(spacing: 8) {
+                                // Battery ECO Badge
+                                HStack(spacing: 4) {
+                                    Image(systemName: battery.isPowerSavingActive ? "leaf.fill" : "bolt.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(battery.isPowerSavingActive ? AppTheme.emerald : AppTheme.accent)
+                                    Text("\(battery.batteryLevelPercent)%")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(AppTheme.surfaceElevated)
+                                .clipShape(Capsule())
                                 
-                                Text(dashClient.connectionState == .connected ? "DASH LINKED" : "PHONE HUD")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .foregroundColor(AppTheme.textSecondary)
+                                // Dash Link Pill
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(dashClient.connectionState == .connected ? AppTheme.emerald : AppTheme.textTertiary)
+                                        .frame(width: 7, height: 7)
+                                    
+                                    Text(dashClient.connectionState == .connected ? "DASH LINKED" : "PHONE HUD")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(AppTheme.surfaceElevated)
+                                .clipShape(Capsule())
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(AppTheme.surfaceElevated)
-                            .clipShape(Capsule())
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 8)
+                        
+                        // Incoming / Ongoing Call Overlay (if call active)
+                        if call.isRinging || call.isOngoing {
+                            GlassCard(padding: 14) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: call.isRinging ? "phone.down.waves.and.radiowaves" : "phone.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundColor(call.isRinging ? AppTheme.emerald : AppTheme.accent)
+                                        .frame(width: 40, height: 40)
+                                        .background(AppTheme.surfaceElevated)
+                                        .clipShape(Circle())
+                                    
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(call.callerName)
+                                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                                            .foregroundColor(.white)
+                                        
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "headphones")
+                                                .font(.system(size: 10))
+                                            Text(call.activeAudioDeviceName)
+                                                .font(.system(size: 11, design: .monospaced))
+                                        }
+                                        .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if call.isRinging {
+                                        Button(action: { call.answerCall() }) {
+                                            Image(systemName: "phone.fill")
+                                                .foregroundColor(.white)
+                                                .frame(width: 36, height: 36)
+                                                .background(AppTheme.emerald)
+                                                .clipShape(Circle())
+                                        }
+                                    }
+                                    
+                                    Button(action: { call.endOrRejectCall() }) {
+                                        Image(systemName: "phone.down.fill")
+                                            .foregroundColor(.white)
+                                            .frame(width: 36, height: 36)
+                                            .background(AppTheme.coral)
+                                            .clipShape(Circle())
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                         
                         // Central Gauge
                         CircularGauge(
@@ -64,7 +134,7 @@ public struct CockpitView: View {
                             heading: tracker.currentHeading,
                             isRecording: tracker.isRecordingRide
                         )
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 6)
                         
                         // Live Ride Telemetry Cards
                         if tracker.isRecordingRide {
@@ -125,6 +195,53 @@ public struct CockpitView: View {
                             .padding(.horizontal, 20)
                         }
                         
+                        // Minimalist Media Playback Controller (Bike Handlebar Joystick Linked)
+                        GlassCard(padding: 12) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(AppTheme.accent)
+                                    .frame(width: 32, height: 32)
+                                    .background(AppTheme.surfaceElevated)
+                                    .clipShape(Circle())
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(media.currentTitle)
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                        .foregroundColor(AppTheme.textPrimary)
+                                        .lineLimit(1)
+                                    
+                                    Text(media.currentArtist.isEmpty ? "Handlebar controls active" : media.currentArtist)
+                                        .font(.system(size: 11, design: .rounded))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                
+                                Spacer()
+                                
+                                HStack(spacing: 16) {
+                                    Button(action: { media.previousTrack() }) {
+                                        Image(systemName: "backward.fill")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                    
+                                    Button(action: { media.togglePlayPause() }) {
+                                        Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(AppTheme.accent)
+                                    }
+                                    
+                                    Button(action: { media.nextTrack() }) {
+                                        Image(systemName: "forward.fill")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(AppTheme.textSecondary)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        
                         // Primary Ride Action Button
                         VStack(spacing: 12) {
                             if tracker.isRecordingRide {
@@ -132,7 +249,6 @@ public struct CockpitView: View {
                                     let generator = UINotificationFeedbackGenerator()
                                     generator.notificationOccurred(.success)
                                     if let ride = tracker.stopRide() {
-                                        // Update bike odometer automatically!
                                         vehicleStore.updateOdometer(km: vehicleStore.activeVehicle.currentOdometer + ride.distanceKm)
                                         onRideSaved(ride)
                                     }

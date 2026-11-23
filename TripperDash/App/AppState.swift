@@ -8,6 +8,9 @@ public final class AppState: @unchecked Sendable {
     public let firebase = FirebaseManager.shared
     public let dashClient = TripperDashClient.shared
     public let podClient = TripperPodClient.shared
+    public let media = MediaPlaybackService.shared
+    public let call = CallHandlingService.shared
+    public let battery = BatteryOptimizationService.shared
     
     public init() {
         tracker.requestPermissions()

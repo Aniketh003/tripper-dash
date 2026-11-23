@@ -149,6 +149,9 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
         let speedKmh = speedMps * 3.6
         currentSpeedKmh = speedKmh
         
+        // Dynamically throttle GPS polling when stationary to conserve battery
+        BatteryOptimizationService.shared.evaluatePowerState(currentSpeedKmh: speedKmh, locationManager: manager)
+        
         // Handle ride recording accumulation
         if isRecordingRide {
             if let lastLoc = lastRecordedLocation {

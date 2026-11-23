@@ -7,6 +7,8 @@ public enum K1GCommand: UInt8 {
     case keepAlive = 0x05
     case navigationState = 0x10
     case joystickEvent = 0x20
+    case musicState = 0x21
+    case callState = 0x22
     case telemetry = 0x30
 }
 
@@ -60,7 +62,65 @@ public struct K1GPacket {
         return Data(bytes)
     }
     
-    // Parse Incoming Dash Event (such as handlebar joystick clicks)
+    // Build Music Playback Info Packet for the Dash Gold Band
+    public static func makeMusicInfoPacket(
+        title: String,
+        artist: String,
+        isPlaying: Bool
+    ) -> Data {
+        var bytes: [UInt8] = magicHeader
+        bytes.append(K1GCommand.musicState.rawValue)
+        
+        let titleData = title.prefix(20).data(using: .utf8) ?? Data()
+        let artistData = artist.prefix(16).data(using: .utf8) ?? Data()
+        let totalPayload = 1 + 1 + titleData.count + 1 + artistData.count
+        bytes.append(UInt8(min(totalPayload, 255)))
+        
+        // Playback state byte: 0x01 = playing, 0x00 = paused
+        bytes.append(isPlaying ? 0x01 : 0x00)
+        
+        // Title length + title bytes
+        bytes.append(UInt8(titleData.count))
+        bytes.append(contentsOf: titleData)
+        
+        // Artist length + artist bytes
+        bytes.append(UInt8(artistData.count))
+        bytes.append(contentsOf: artistData)
+        
+        return Data(bytes)
+    }
+    
+    // Build Incoming/Ongoing Call Alert Packet for the Dash Overlay
+    public static func makeCallAlertPacket(
+        callerName: String,
+        isRinging: Bool,
+        isOngoing: Bool,
+        durationSeconds: UInt32
+    ) -> Data {
+        var bytes: [UInt8] = magicHeader
+        bytes.append(K1GCommand.callState.rawValue)
+        
+        let nameData = callerName.prefix(20).data(using: .utf8) ?? Data()
+        let payloadLength = 1 + 4 + nameData.count
+        bytes.append(UInt8(min(payloadLength, 255)))
+        
+        // Call status: 0x01 = ringing, 0x02 = ongoing, 0x00 = idle/ended
+        let statusByte: UInt8 = isRinging ? 0x01 : (isOngoing ? 0x02 : 0x00)
+        bytes.append(statusByte)
+        
+        // Call duration in seconds (4 bytes)
+        bytes.append(UInt8((durationSeconds >> 24) & 0xFF))
+        bytes.append(UInt8((durationSeconds >> 16) & 0xFF))
+        bytes.append(UInt8((durationSeconds >> 8) & 0xFF))
+        bytes.append(UInt8(durationSeconds & 0xFF))
+        
+        // Caller name
+        bytes.append(contentsOf: nameData)
+        
+        return Data(bytes)
+    }
+    
+    // Parse Incoming Dash Event (handlebar joystick clicks)
     public static func parseIncoming(data: Data) -> DashJoystickEvent? {
         guard data.count >= 4 else { return nil }
         let bytes = [UInt8](data)

@@ -107,6 +107,27 @@ public final class TripperDashClient: @unchecked Sendable {
         sendData(packet)
     }
     
+    // MARK: - Music Display on Dash Gold Band
+    public func sendMusicUpdate(title: String, artist: String, isPlaying: Bool) {
+        let packet = K1GPacket.makeMusicInfoPacket(
+            title: title,
+            artist: artist,
+            isPlaying: isPlaying
+        )
+        sendData(packet)
+    }
+    
+    // MARK: - Call Alerts on Dash Screen
+    public func sendCallAlert(callerName: String, isRinging: Bool, isOngoing: Bool, durationSeconds: UInt32) {
+        let packet = K1GPacket.makeCallAlertPacket(
+            callerName: callerName,
+            isRinging: isRinging,
+            isOngoing: isOngoing,
+            durationSeconds: durationSeconds
+        )
+        sendData(packet)
+    }
+    
     private func sendData(_ data: Data) {
         guard let conn = connection, connectionState == .connected || connectionState == .streaming else { return }
         conn.send(content: data, completion: .contentProcessed({ error in
@@ -116,7 +137,7 @@ public final class TripperDashClient: @unchecked Sendable {
         }))
     }
     
-    // MARK: - Inbound Dash Listener (Joystick events)
+    // MARK: - Inbound Dash Listener (Joystick events from Handlebar)
     private func startReceiving() {
         guard let conn = connection else { return }
         conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] content, _, _, error in
@@ -124,11 +145,48 @@ public final class TripperDashClient: @unchecked Sendable {
             if let data = content, let event = K1GPacket.parseIncoming(data: data) {
                 DispatchQueue.main.async {
                     self.lastJoystickEvent = event
+                    self.handleJoystickEvent(event)
                 }
             }
             if error == nil && self.connectionState == .connected {
                 self.startReceiving()
             }
+        }
+    }
+    
+    // MARK: - Handlebar 5-Way Joystick Action Dispatcher
+    private func handleJoystickEvent(_ event: DashJoystickEvent) {
+        let callService = CallHandlingService.shared
+        let mediaService = MediaPlaybackService.shared
+        
+        // Priority 1: Handle Incoming / Active Call
+        if callService.isRinging {
+            switch event {
+            case .centerClick, .up:
+                callService.answerCall()
+            case .down:
+                callService.endOrRejectCall()
+            default:
+                break
+            }
+            return
+        } else if callService.isOngoing {
+            if event == .down || event == .centerClick {
+                callService.endOrRejectCall()
+            }
+            return
+        }
+        
+        // Priority 2: Music Playback Control while Riding
+        switch event {
+        case .centerClick:
+            mediaService.togglePlayPause()
+        case .right:
+            mediaService.nextTrack()
+        case .left:
+            mediaService.previousTrack()
+        default:
+            break
         }
     }
 }

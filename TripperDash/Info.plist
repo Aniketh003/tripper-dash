@@ -28,6 +28,8 @@
 	<string>TripperDash connects to Royal Enfield Tripper Pods to push turn-by-turn navigation arrows directly to your bike.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TripperDash communicates with the Royal Enfield TFT Dash (Himalayan 450) over Wi-Fi.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>TripperDash displays music track metadata and allows controlling playback using the motorcycle handlebar joystick.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

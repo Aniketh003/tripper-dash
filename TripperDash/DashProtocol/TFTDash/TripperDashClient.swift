@@ -32,6 +32,7 @@ public final class TripperDashClient: @unchecked Sendable {
     public var broadcastIP: String = "192.168.1.255"
     public var bikePort: UInt16 = DashK1GProtocol.bikeListenPort   // 2000
     public var listenPort: UInt16 = DashK1GProtocol.phoneListenPort // 2002
+    public var isMockMode: Bool = false
     
     // Live Diagnostic Logs for UI display
     public var diagnosticLogs: [String] = []
@@ -60,6 +61,9 @@ public final class TripperDashClient: @unchecked Sendable {
         if let savedSSID = UserDefaults.standard.string(forKey: "pref_dash_ssid"), !savedSSID.isEmpty {
             self.dashSSID = savedSSID
         }
+        if let savedIP = UserDefaults.standard.string(forKey: "pref_dash_ip"), !savedIP.isEmpty {
+            self.dashIP = savedIP
+        }
     }
     
     public func setDashSSID(_ newSSID: String) {
@@ -68,6 +72,14 @@ public final class TripperDashClient: @unchecked Sendable {
         self.dashSSID = trimmed
         UserDefaults.standard.set(trimmed, forKey: "pref_dash_ssid")
         log("Updated Dash SSID to: '\(trimmed)'")
+    }
+    
+    public func setDashIP(_ newIP: String) {
+        let trimmed = newIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        self.dashIP = trimmed
+        UserDefaults.standard.set(trimmed, forKey: "pref_dash_ip")
+        log("Updated Dash IP to: '\(trimmed)'")
     }
     
     public func log(_ message: String) {
@@ -91,27 +103,29 @@ public final class TripperDashClient: @unchecked Sendable {
     }
     
     // MARK: - Connection Control
-    public func connect(to ip: String = "192.168.1.1", port: UInt16 = DashK1GProtocol.bikeListenPort) {
+    public func connect(to ip: String? = nil, port: UInt16 = DashK1GProtocol.bikeListenPort) {
         disconnect()
         
-        self.dashIP = ip
+        let targetIP = ip ?? self.dashIP
+        self.dashIP = targetIP
         self.bikePort = port
         self.connectionState = .verifyingNetwork
         self.dashModulusHex = nil
         self.dashExponentHex = nil
         self.sessionKeySent = false
         self.authRetries = 0
+        self.isMockMode = false
         
-        log("Initiating connection to Dash at \(ip):\(port) (RX listening on port \(listenPort))...")
+        log("Initiating connection to Dash at \(targetIP):\(port) (RX listening on port \(listenPort))...")
         
         // 1. Verify Local Wi-Fi Subnet
         if let localIP = getLocalWiFiIP() {
             log("Local iPhone Wi-Fi IP: \(localIP)")
             if !localIP.hasPrefix("192.168.1.") && !localIP.hasPrefix("192.168.") {
                 log("⚠️ Warning: iPhone IP is not on 192.168.1.x subnet!")
-                log("👉 Ensure phone is connected to the bike's Wi-Fi hotspot ('\(dashSSID)').")
+                log("👉 Ensure phone is connected to bike Wi-Fi ('\(dashSSID)') or Mac Mock Dash.")
             } else {
-                log("✅ Wi-Fi subnet verified (192.168.1.x).")
+                log("✅ Local Wi-Fi verified (\(localIP)).")
             }
         } else {
             log("⚠️ Could not detect Wi-Fi IP. Please check iOS Settings > Wi-Fi.")
@@ -123,8 +137,37 @@ public final class TripperDashClient: @unchecked Sendable {
         }
     }
     
+    // MARK: - Local In-App Mock Simulation
+    public func startMockConnection() {
+        disconnect()
+        isMockMode = true
+        connectionState = .requestingAuth
+        log("🧪 [MOCK DASH] Simulating Royal Enfield Himalayan 450 TFT...")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self, self.isMockMode else { return }
+            self.connectionState = .exchangingKeys
+            self.log("🧪 [MOCK DASH] Dash exchanged RSA-1024 public key.")
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self = self, self.isMockMode else { return }
+                self.connectionState = .connected
+                self.log("🎉 *** [MOCK DASH] AUTHENTICATION OK (07 01 01) ***")
+                self.log("✅ Simulation Active: Cockpit, Navigation & Controls unlocked.")
+                BackgroundKeepAliveService.shared.startKeepAlive()
+                self.enterNavigationMode()
+            }
+        }
+    }
+    
+    public func simulateJoystickPress(_ event: DashJoystickEvent) {
+        log("🎮 [MOCK] Handlebar Joystick Event Triggered: \(event)")
+        dispatchJoystick(event)
+    }
+    
     public func disconnect() {
         stopAllTimers()
+        isMockMode = false
         
         // Send projection teardown TLVs if was running
         if isRunning {

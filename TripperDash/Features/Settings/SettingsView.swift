@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @State private var showingEmailSignIn = false
     @State private var emailInput = ""
     @State private var ssidInput = ""
+    @State private var ipInput = ""
     @AppStorage("pref_currency_symbol") private var currencySymbol = "₹"
     @AppStorage("pref_speed_unit") private var speedUnit = "km/h"
     
@@ -20,6 +21,7 @@ public struct SettingsView: View {
         self.dashClient = dashClient
         self.podClient = podClient
         _ssidInput = State(initialValue: dashClient.dashSSID)
+        _ipInput = State(initialValue: dashClient.dashIP)
     }
     
     public var body: some View {
@@ -115,6 +117,53 @@ public struct SettingsView: View {
                                                 .font(.system(size: 10, design: .rounded))
                                                 .foregroundColor(AppTheme.textTertiary)
                                         }
+                                        
+                                        // Dash IP Host Field (Enables Local / Mac Testing)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("DASH IP ADDRESS (Default 192.168.1.1)")
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                            
+                                            HStack {
+                                                TextField("192.168.1.1", text: $ipInput)
+                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .foregroundColor(.white)
+                                                    .autocorrectionDisabled()
+                                                    .textInputAutocapitalization(.never)
+                                                    .onChange(of: ipInput) { _, newValue in
+                                                        dashClient.setDashIP(newValue)
+                                                    }
+                                                
+                                                if ipInput != dashClient.dashIP {
+                                                    Button("Save") {
+                                                        dashClient.setDashIP(ipInput)
+                                                    }
+                                                    .font(.system(size: 11, weight: .bold))
+                                                    .foregroundColor(AppTheme.accent)
+                                                }
+                                            }
+                                            .padding(8)
+                                            .background(AppTheme.surfaceElevated)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            
+                                            HStack(spacing: 8) {
+                                                Button("Bike Default (192.168.1.1)") {
+                                                    ipInput = "192.168.1.1"
+                                                    dashClient.setDashIP("192.168.1.1")
+                                                }
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(dashClient.dashIP == "192.168.1.1" ? AppTheme.accent : AppTheme.textTertiary)
+                                                
+                                                Spacer()
+                                                
+                                                Button("Simulator (127.0.0.1)") {
+                                                    ipInput = "127.0.0.1"
+                                                    dashClient.setDashIP("127.0.0.1")
+                                                }
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(dashClient.dashIP == "127.0.0.1" ? AppTheme.accent : AppTheme.textTertiary)
+                                            }
+                                        }
                                     }
                                     
                                     Divider().background(AppTheme.border)
@@ -153,6 +202,100 @@ public struct SettingsView: View {
                             .padding(.horizontal, 20)
                         }
                         .padding(.top, 12)
+                        
+                        // Desk Testing & In-App Simulation Mode
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("LOCAL DESK TESTING & SIMULATION")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(AppTheme.textTertiary)
+                                .padding(.horizontal, 20)
+                            
+                            GlassCard {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Simulate TFT Dash (No Bike Needed)")
+                                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                                .foregroundColor(AppTheme.textPrimary)
+                                            Text(dashClient.isMockMode ? "Mock Dash Active (Cockpit Unlocked)" : "Test navigation, music & calls indoors")
+                                                .font(.system(size: 11, design: .rounded))
+                                                .foregroundColor(dashClient.isMockMode ? AppTheme.emerald : AppTheme.textTertiary)
+                                        }
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            if dashClient.isMockMode {
+                                                dashClient.disconnect()
+                                            } else {
+                                                dashClient.startMockConnection()
+                                            }
+                                        }) {
+                                            Text(dashClient.isMockMode ? "Stop Sim" : "Start Sim")
+                                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                                .foregroundColor(dashClient.isMockMode ? AppTheme.coral : .white)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 7)
+                                                .background(dashClient.isMockMode ? AppTheme.surfaceElevated : AppTheme.emerald)
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                    
+                                    if dashClient.connectionState == .connected {
+                                        Divider().background(AppTheme.border)
+                                        
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text("HANDLEBAR JOYSTICK TEST BUTTONS")
+                                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                                .foregroundColor(AppTheme.textTertiary)
+                                            
+                                            HStack(spacing: 8) {
+                                                Button("⏮️ Left") {
+                                                    dashClient.simulateJoystickPress(.left)
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                                
+                                                Button("⏯️ Center") {
+                                                    dashClient.simulateJoystickPress(.centerClick)
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                                
+                                                Button("⏭️ Right") {
+                                                    dashClient.simulateJoystickPress(.right)
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                                
+                                                Button("📞 Down") {
+                                                    dashClient.simulateJoystickPress(.down)
+                                                }
+                                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(AppTheme.surfaceElevated)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                        }
                         
                         // Live Diagnostic Console
                         VStack(alignment: .leading, spacing: 8) {

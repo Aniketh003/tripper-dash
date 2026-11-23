@@ -142,14 +142,14 @@ public final class LocationTracker: NSObject, CLLocationManagerDelegate, @unchec
     }
     
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        
-        // Filter out stale or inaccurate readings
-        guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= accuracyGateMeters else { return }
+        guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }
         
         currentLocation = location.coordinate
         currentAltitude = location.altitude
         WeatherService.shared.refresh(for: location.coordinate)
+        
+        // Filter out coarse readings for ride distance & speed tracking
+        guard location.horizontalAccuracy <= accuracyGateMeters else { return }
         
         // Convert speed (m/s -> km/h)
         let speedMps = max(0.0, location.speed)

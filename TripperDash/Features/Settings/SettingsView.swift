@@ -212,21 +212,12 @@ public struct SettingsView: View {
                                     
                                     Divider().background(AppTheme.border)
                                     
-                                    Toggle(isOn: $dashClient.showSpeedOnTFT) {
-                                        Label("Digital Speed & Compass", systemImage: "speedometer")
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundColor(AppTheme.textPrimary)
-                                    }
-                                    .tint(AppTheme.accent)
-                                    
-                                    Divider().background(AppTheme.border)
-                                    
                                     Toggle(isOn: $dashClient.enableVideoProjection) {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Label("H.264 TFT Video Stream", systemImage: "display")
                                                 .font(.system(size: 15, weight: .medium))
                                                 .foregroundColor(AppTheme.textPrimary)
-                                            Text(projection.isStreaming ? "Active · \(String(format: "%.1f", projection.currentFPS)) fps on UDP/5000" : "Projects circular homescreen to bike cluster")
+                                            Text(projection.isStreaming ? "Active · \(String(format: "%.1f", projection.currentFPS)) fps on UDP/5000" : "Projects 526×300 Digital Homescreen dome to bike cluster")
                                                 .font(.system(size: 12))
                                                 .foregroundColor(projection.isStreaming ? AppTheme.emerald : AppTheme.textSecondary)
                                         }
@@ -318,21 +309,6 @@ public struct SettingsView: View {
                             
                             GlassCard {
                                 VStack(spacing: 14) {
-                                    HStack {
-                                        Text("Speed Unit")
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundColor(AppTheme.textPrimary)
-                                        Spacer()
-                                        Picker("Unit", selection: $speedUnit) {
-                                            Text("km/h").tag("km/h")
-                                            Text("mph").tag("mph")
-                                        }
-                                        .pickerStyle(.segmented)
-                                        .frame(width: 130)
-                                    }
-                                    
-                                    Divider().background(AppTheme.border)
-                                    
                                     HStack {
                                         Text("Currency")
                                             .font(.system(size: 15, weight: .medium))

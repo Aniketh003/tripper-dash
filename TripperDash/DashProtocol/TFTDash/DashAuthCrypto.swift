@@ -1,5 +1,8 @@
 import Foundation
 import Security
+#if canImport(CommonCrypto)
+import CommonCrypto
+#endif
 
 public enum DashAuthCrypto {
     
@@ -49,6 +52,45 @@ public enum DashAuthCrypto {
         }
         
         return ciphertext
+    }
+    
+    /// Encrypts plaintext using AES-256-CBC with PKCS#7 padding under the 32-byte session key.
+    /// Returns [16-byte random IV ‖ ciphertext], required for TLV 05 22 (Caller Name on Dash).
+    public static func aesEncryptCBC(plaintext: Data, aesKey: Data) -> Data? {
+        #if canImport(CommonCrypto)
+        guard aesKey.count == kCCKeySizeAES256 else { return nil }
+        var iv = Data(count: kCCBlockSizeAES128)
+        _ = iv.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, kCCBlockSizeAES128, $0.baseAddress!) }
+        
+        let outCapacity = plaintext.count + kCCBlockSizeAES128
+        var outBuffer = Data(count: outCapacity)
+        var numBytesEncrypted: size_t = 0
+        
+        let status = outBuffer.withUnsafeMutableBytes { outBytes in
+            plaintext.withUnsafeBytes { inBytes in
+                iv.withUnsafeBytes { ivBytes in
+                    aesKey.withUnsafeBytes { keyBytes in
+                        CCCrypt(
+                            CCOperation(kCCEncrypt),
+                            CCAlgorithm(kCCAlgorithmAES),
+                            CCOptions(kCCOptionPKCS7Padding),
+                            keyBytes.baseAddress, aesKey.count,
+                            ivBytes.baseAddress,
+                            inBytes.baseAddress, plaintext.count,
+                            outBytes.baseAddress, outCapacity,
+                            &numBytesEncrypted
+                        )
+                    }
+                }
+            }
+        }
+        guard status == kCCSuccess else { return nil }
+        var result = iv
+        result.append(outBuffer.prefix(numBytesEncrypted))
+        return result
+        #else
+        return nil
+        #endif
     }
     
     // MARK: - ASN.1 DER Builder for RSA Public Key

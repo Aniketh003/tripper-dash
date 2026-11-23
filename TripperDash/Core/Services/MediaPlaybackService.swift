@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Darwin
 #if os(iOS)
 import MediaPlayer
 import AVFoundation
@@ -12,6 +13,7 @@ public final class MediaPlaybackService: @unchecked Sendable {
     
     public var currentTitle: String = "Not Playing"
     public var currentArtist: String = ""
+    public var currentAlbum: String = ""
     public var isPlaying: Bool = false
     public var currentVolume: Float = 0.5
     public var volumePercent: Int = 50
@@ -23,11 +25,19 @@ public final class MediaPlaybackService: @unchecked Sendable {
     private let player = MPMusicPlayerController.systemMusicPlayer
     fileprivate weak var mountedSlider: UISlider?
     private var volumeObservation: NSKeyValueObservation?
+    
+    // Dynamic MediaRemote bridge for system-wide playback (Spotify, YouTube Music, Apple Music) on sideloaded builds
+    private typealias MRMediaRemoteSendCommandFn = @convention(c) (UInt32, AnyObject?) -> Bool
+    private typealias MRMediaRemoteGetNowPlayingInfoFn = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+    private var mrSendCommand: MRMediaRemoteSendCommandFn?
+    private var mrGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfoFn?
     #endif
     private var hudDismissWorkItem: DispatchWorkItem?
+    private var pollTimer: Timer?
     
     private init() {
         #if os(iOS)
+        setupMediaRemoteBridge()
         setupAudioSessionAndVolumeObserver()
         setupMediaObservers()
         updateCurrentTrack()
@@ -35,6 +45,18 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
     
     #if os(iOS)
+    private func setupMediaRemoteBridge() {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW) else {
+            return
+        }
+        if let symSend = dlsym(handle, "MRMediaRemoteSendCommand") {
+            mrSendCommand = unsafeBitCast(symSend, to: MRMediaRemoteSendCommandFn.self)
+        }
+        if let symInfo = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
+            mrGetNowPlayingInfo = unsafeBitCast(symInfo, to: MRMediaRemoteGetNowPlayingInfoFn.self)
+        }
+    }
+    
     private func setupAudioSessionAndVolumeObserver() {
         let session = AVAudioSession.sharedInstance()
         do {
@@ -54,11 +76,7 @@ public final class MediaPlaybackService: @unchecked Sendable {
             DispatchQueue.main.async {
                 self.currentVolume = newVol
                 self.volumePercent = Int(round(newVol * 100))
-                TripperDashClient.shared.sendMusicUpdate(
-                    title: self.currentTitle,
-                    artist: self.currentArtist,
-                    isPlaying: self.isPlaying
-                )
+                self.notifyDashMusicAndFrame()
             }
         }
     }
@@ -79,7 +97,12 @@ public final class MediaPlaybackService: @unchecked Sendable {
             object: player,
             queue: .main
         ) { [weak self] _ in
-            self?.updatePlaybackState()
+            self?.updateCurrentTrack()
+        }
+        
+        // Periodic lightweight sync so external player track changes (Spotify / YouTube Music / Lock Screen) stay realtime
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.updateCurrentTrack(silentIfUnchanged: true)
         }
     }
     
@@ -88,33 +111,71 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
     #endif
     
-    public func updateCurrentTrack() {
+    public func updateCurrentTrack(silentIfUnchanged: Bool = false) {
         #if os(iOS)
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            let prevTitle = self.currentTitle
+            let prevArtist = self.currentArtist
+            let prevPlaying = self.isPlaying
+            
             if let item = self.player.nowPlayingItem {
                 self.currentTitle = item.title ?? "Unknown Track"
                 self.currentArtist = item.artist ?? ""
+                self.currentAlbum = item.albumTitle ?? ""
+                self.isPlaying = (self.player.playbackState == .playing)
+                self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+            } else if let getInfo = self.mrGetNowPlayingInfo {
+                // Query system MediaRemote daemon (captures Spotify, YouTube Music, Apple Music, etc.)
+                getInfo(DispatchQueue.main) { [weak self] info in
+                    guard let self = self else { return }
+                    if let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String, !title.isEmpty {
+                        self.currentTitle = title
+                        self.currentArtist = (info["kMRMediaRemoteNowPlayingInfoArtist"] as? String) ?? ""
+                        self.currentAlbum = (info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String) ?? ""
+                        if let rate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double {
+                            self.isPlaying = rate > 0.01
+                        }
+                    } else if self.player.playbackState == .playing {
+                        self.isPlaying = true
+                    } else if self.currentTitle == "Not Playing" {
+                        self.isPlaying = false
+                    }
+                    self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
+                }
             } else {
-                self.currentTitle = "Not Playing"
-                self.currentArtist = ""
+                self.isPlaying = (self.player.playbackState == .playing)
+                self.commitTrackIfNeeded(prevTitle: prevTitle, prevArtist: prevArtist, prevPlaying: prevPlaying, silentIfUnchanged: silentIfUnchanged)
             }
-            self.updatePlaybackState()
-            
-            TripperDashClient.shared.sendMusicUpdate(
-                title: self.currentTitle,
-                artist: self.currentArtist,
-                isPlaying: self.isPlaying
-            )
         }
         #endif
     }
     
-    #if os(iOS)
-    private func updatePlaybackState() {
-        isPlaying = (player.playbackState == .playing)
+    private func commitTrackIfNeeded(prevTitle: String, prevArtist: String, prevPlaying: Bool, silentIfUnchanged: Bool) {
+        let changed = (prevTitle != currentTitle) || (prevArtist != currentArtist) || (prevPlaying != isPlaying)
+        if changed || !silentIfUnchanged {
+            notifyDashMusicAndFrame()
+        }
     }
-    #endif
+    
+    private func notifyDashMusicAndFrame() {
+        TripperDashClient.shared.sendMusicUpdate(
+            title: currentTitle,
+            album: currentAlbum,
+            artist: currentArtist,
+            isPlaying: isPlaying
+        )
+        TFTProjectionService.shared.triggerImmediateFrame()
+    }
+    
+    /// Schedules follow-up metadata checks after an async skip/play command so the new song title is always captured
+    private func scheduleFollowUpTrackUpdates() {
+        for delay in [0.15, 0.35, 0.70] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.updateCurrentTrack()
+            }
+        }
+    }
     
     // MARK: - Playback Controls (Driven by UI or Bike Handlebar Joystick)
     
@@ -123,23 +184,26 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if self.player.playbackState == .playing {
-                self.player.pause()
-                self.isPlaying = false
-            } else {
-                self.player.play()
-                self.isPlaying = true
+            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
+                if self.player.playbackState == .playing {
+                    self.player.pause()
+                    self.isPlaying = false
+                } else {
+                    self.player.play()
+                    self.isPlaying = true
+                }
+            } else if let sendCmd = self.mrSendCommand {
+                // Command 2 = kMRTogglePlayPause (works across Spotify, YouTube Music, Apple Music)
+                _ = sendCmd(2, nil)
+                self.isPlaying.toggle()
             }
             #else
             self.isPlaying.toggle()
             #endif
             
             TripperDashClient.shared.log(self.isPlaying ? "▶️ Music: Playing (\(self.currentTitle))" : "⏸️ Music: Paused")
-            TripperDashClient.shared.sendMusicUpdate(
-                title: self.currentTitle,
-                artist: self.currentArtist,
-                isPlaying: self.isPlaying
-            )
+            self.notifyDashMusicAndFrame()
+            self.scheduleFollowUpTrackUpdates()
         }
     }
     
@@ -148,10 +212,15 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            self.player.skipToNextItem()
+            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
+                self.player.skipToNextItem()
+            } else if let sendCmd = self.mrSendCommand {
+                // Command 4 = kMRNextTrack
+                _ = sendCmd(4, nil)
+            }
             #endif
             TripperDashClient.shared.log("⏭️ Music: Next Track")
-            self.updateCurrentTrack()
+            self.scheduleFollowUpTrackUpdates()
         }
     }
     
@@ -160,10 +229,19 @@ public final class MediaPlaybackService: @unchecked Sendable {
             guard let self = self else { return }
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            self.player.skipToPreviousItem()
+            if self.player.nowPlayingItem != nil || self.mrSendCommand == nil {
+                if self.player.currentPlaybackTime > 3.5 {
+                    self.player.skipToBeginning()
+                } else {
+                    self.player.skipToPreviousItem()
+                }
+            } else if let sendCmd = self.mrSendCommand {
+                // Command 5 = kMRPreviousTrack
+                _ = sendCmd(5, nil)
+            }
             #endif
             TripperDashClient.shared.log("⏮️ Music: Previous Track")
-            self.updateCurrentTrack()
+            self.scheduleFollowUpTrackUpdates()
         }
     }
     
@@ -189,7 +267,6 @@ public final class MediaPlaybackService: @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             #if os(iOS)
-            // Always read true hardware volume from AVAudioSession (never stale slider.value!)
             let session = AVAudioSession.sharedInstance()
             try? session.setActive(true)
             let base = session.outputVolume
@@ -209,7 +286,6 @@ public final class MediaPlaybackService: @unchecked Sendable {
         #if os(iOS)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if let slider = self.mountedSlider {
-            // Setting value + sending touchUpInside reliably triggers MPVolumeSlider's internal system audio commit
             slider.setValue(target, animated: false)
             slider.sendActions(for: .touchUpInside)
             slider.sendActions(for: .valueChanged)
@@ -218,11 +294,7 @@ public final class MediaPlaybackService: @unchecked Sendable {
         
         triggerVolumeHUD()
         TripperDashClient.shared.log("🔊 System Volume → \(self.volumePercent)%")
-        TripperDashClient.shared.sendMusicUpdate(
-            title: self.currentTitle,
-            artist: self.currentArtist,
-            isPlaying: self.isPlaying
-        )
+        notifyDashMusicAndFrame()
     }
     
     private func triggerVolumeHUD() {
@@ -251,7 +323,6 @@ public struct SystemVolumeBridge: UIViewRepresentable {
         volumeView.isUserInteractionEnabled = false
         volumeView.clipsToBounds = true
         
-        // Locate internal UISlider once laid out and register with MediaPlaybackService
         DispatchQueue.main.async {
             if let slider = findSlider(in: volumeView) {
                 MediaPlaybackService.shared.attachSlider(slider)

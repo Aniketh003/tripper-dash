@@ -5,38 +5,68 @@ import CoreLocation
 public final class WeatherService: @unchecked Sendable {
     public static let shared = WeatherService()
     
-    public var temperatureC: Int = 26
-    public var feelsLikeC: Int = 27
-    public var conditionText: String = "Clear"
-    public var symbolName: String = "sun.max.fill"
-    public var windSpeedKmh: Int = 10
-    public var humidityPercent: Int = 55
-    public var locationName: String = "Local"
+    public var temperatureC: Int = 0
+    public var feelsLikeC: Int = 0
+    public var conditionText: String = "Syncing…"
+    public var symbolName: String = "cloud.sun.fill"
+    public var windSpeedKmh: Int = 0
+    public var humidityPercent: Int = 0
+    public var locationName: String = ""
+    /// Authentic Royal Enfield TFT 06 08 Weather Icon: 1=Cloudy, 2=Thunder, 3=Rain, 4=Snow, 5=Sun, 0xFF=No Data
+    public var dashWeatherIcon: UInt8 = 0xFF
     public var isLoaded: Bool = false
     public var isRefreshing: Bool = false
     public var lastUpdated: Date? = nil
     
     private var lastFetchCoordinate: CLLocationCoordinate2D? = nil
     private let geocoder = CLGeocoder()
+    private let cellularSession: URLSession
     
-    private init() {}
+    private init() {
+        let config = URLSessionConfiguration.ephemeral
+        config.allowsCellularAccess = true
+        config.waitsForConnectivity = false
+        config.timeoutIntervalForRequest = 8.0
+        #if os(iOS)
+        config.multipathServiceType = .handover
+        #endif
+        self.cellularSession = URLSession(configuration: config)
+        
+        // Restore last real cached weather from UserDefaults (never fake placeholder numbers)
+        if UserDefaults.standard.bool(forKey: "cache_weather_valid") {
+            self.temperatureC = UserDefaults.standard.integer(forKey: "cache_weather_temp")
+            self.feelsLikeC = UserDefaults.standard.integer(forKey: "cache_weather_feels")
+            self.conditionText = UserDefaults.standard.string(forKey: "cache_weather_cond") ?? "Clear"
+            self.symbolName = UserDefaults.standard.string(forKey: "cache_weather_sym") ?? "sun.max.fill"
+            self.windSpeedKmh = UserDefaults.standard.integer(forKey: "cache_weather_wind")
+            self.humidityPercent = UserDefaults.standard.integer(forKey: "cache_weather_hum")
+            self.locationName = UserDefaults.standard.string(forKey: "cache_weather_loc") ?? ""
+            let iconRaw = UserDefaults.standard.integer(forKey: "cache_weather_icon")
+            self.dashWeatherIcon = iconRaw > 0 ? UInt8(iconRaw & 0xFF) : 0x05
+            self.isLoaded = true
+        }
+    }
     
     public var compactTFTString: String {
-        "\(temperatureC)°C \(conditionText)"
+        guard isLoaded else { return "Weather Syncing" }
+        return "\(temperatureC)°C \(conditionText)"
     }
     
     public var fullTFTString: String {
-        if locationName.isEmpty || locationName == "Local" {
+        guard isLoaded else { return "Waiting for GPS Weather…" }
+        if locationName.isEmpty {
             return "\(temperatureC)°C \(conditionText) · Wind \(windSpeedKmh) km/h"
         }
         return "\(temperatureC)°C \(conditionText) · \(locationName)"
     }
     
-    /// Fetches live weather for the rider's current GPS coordinates (throttled to every 10 minutes unless forced)
+    /// Fetches live weather for the rider's current GPS coordinates (throttled to every 5 minutes unless forced)
     public func refresh(for coordinate: CLLocationCoordinate2D?, force: Bool = false) {
-        let coord = coordinate ?? lastFetchCoordinate ?? CLLocationCoordinate2D(latitude: 12.9716, longitude: 77.5946)
+        guard let coord = coordinate ?? lastFetchCoordinate else {
+            return
+        }
         
-        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < 600, isLoaded {
+        if !force, let last = lastUpdated, Date().timeIntervalSince(last) < 300, isLoaded {
             return
         }
         guard !isRefreshing else { return }
@@ -44,18 +74,22 @@ public final class WeatherService: @unchecked Sendable {
         lastFetchCoordinate = coord
         DispatchQueue.main.async { self.isRefreshing = true }
         
-        // 1. Reverse geocode locality name
+        // 1. Reverse geocode real locality name
         let clLocation = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         geocoder.reverseGeocodeLocation(clLocation) { [weak self] placemarks, _ in
             if let place = placemarks?.first {
-                let name = place.locality ?? place.subAdministrativeArea ?? place.administrativeArea ?? "Local"
-                DispatchQueue.main.async {
-                    self?.locationName = name
+                let name = place.locality ?? place.subLocality ?? place.subAdministrativeArea ?? place.administrativeArea ?? ""
+                if !name.isEmpty {
+                    DispatchQueue.main.async {
+                        self?.locationName = name
+                        UserDefaults.standard.set(name, forKey: "cache_weather_loc")
+                        TFTProjectionService.shared.triggerImmediateFrame()
+                    }
                 }
             }
         }
         
-        // 2. Fetch live weather from Open-Meteo (free, no API key required, fast HTTPS JSON)
+        // 2. Fetch live weather from Open-Meteo over cellular/multipath session
         let urlString = String(
             format: "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day",
             coord.latitude, coord.longitude
@@ -65,7 +99,7 @@ public final class WeatherService: @unchecked Sendable {
             return
         }
         
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+        cellularSession.dataTask(with: url) { [weak self] data, _, error in
             defer { DispatchQueue.main.async { self?.isRefreshing = false } }
             guard let self = self, let data = data, error == nil else { return }
             
@@ -82,11 +116,23 @@ public final class WeatherService: @unchecked Sendable {
                     self.windSpeedKmh = Int(round(cur.wind_speed_10m ?? 0))
                     self.conditionText = mapped.text
                     self.symbolName = mapped.symbol
+                    self.dashWeatherIcon = mapped.dashIcon
                     self.isLoaded = true
                     self.lastUpdated = Date()
                     
-                    TripperDashClient.shared.log("🌤️ Weather updated: \(self.fullTFTString)")
+                    // Cache real weather
+                    UserDefaults.standard.set(true, forKey: "cache_weather_valid")
+                    UserDefaults.standard.set(self.temperatureC, forKey: "cache_weather_temp")
+                    UserDefaults.standard.set(self.feelsLikeC, forKey: "cache_weather_feels")
+                    UserDefaults.standard.set(self.conditionText, forKey: "cache_weather_cond")
+                    UserDefaults.standard.set(self.symbolName, forKey: "cache_weather_sym")
+                    UserDefaults.standard.set(self.windSpeedKmh, forKey: "cache_weather_wind")
+                    UserDefaults.standard.set(self.humidityPercent, forKey: "cache_weather_hum")
+                    UserDefaults.standard.set(Int(self.dashWeatherIcon), forKey: "cache_weather_icon")
+                    
+                    TripperDashClient.shared.log("🌤️ Live Weather synced: \(self.fullTFTString)")
                     TripperDashClient.shared.sendWeatherUpdate()
+                    TFTProjectionService.shared.triggerImmediateFrame()
                 }
             } catch {
                 print("WeatherService decode error: \(error)")
@@ -94,33 +140,34 @@ public final class WeatherService: @unchecked Sendable {
         }.resume()
     }
     
-    // MARK: - WMO Weather Interpretation Codes → SF Symbols
-    private static func mapWMOCode(_ code: Int, isDay: Bool) -> (text: String, symbol: String) {
+    // MARK: - WMO Weather Codes → SF Symbols & Royal Enfield TFT 06 08 Icon Byte
+    /// Dash 06 08 icons: 1 = Cloudy, 2 = Thunder, 3 = Rain, 4 = Snow, 5 = Sun
+    private static func mapWMOCode(_ code: Int, isDay: Bool) -> (text: String, symbol: String, dashIcon: UInt8) {
         switch code {
         case 0:
-            return ("Clear", isDay ? "sun.max.fill" : "moon.stars.fill")
+            return ("Clear", isDay ? "sun.max.fill" : "moon.stars.fill", 0x05)
         case 1:
-            return ("Mostly Clear", isDay ? "sun.min.fill" : "moon.fill")
+            return ("Mostly Clear", isDay ? "sun.min.fill" : "moon.fill", 0x05)
         case 2:
-            return ("Partly Cloudy", isDay ? "cloud.sun.fill" : "cloud.moon.fill")
+            return ("Partly Cloudy", isDay ? "cloud.sun.fill" : "cloud.moon.fill", 0x01)
         case 3:
-            return ("Overcast", "cloud.fill")
+            return ("Overcast", "cloud.fill", 0x01)
         case 45, 48:
-            return ("Fog", "cloud.fog.fill")
+            return ("Fog", "cloud.fog.fill", 0x01)
         case 51, 53, 55:
-            return ("Drizzle", "cloud.drizzle.fill")
+            return ("Drizzle", "cloud.drizzle.fill", 0x03)
         case 61, 63, 65:
-            return ("Rain", "cloud.rain.fill")
+            return ("Rain", "cloud.rain.fill", 0x03)
         case 66, 67:
-            return ("Freezing Rain", "cloud.sleet.fill")
+            return ("Freezing Rain", "cloud.sleet.fill", 0x03)
         case 71, 73, 75, 77:
-            return ("Snow", "cloud.snow.fill")
+            return ("Snow", "cloud.snow.fill", 0x04)
         case 80, 81, 82:
-            return ("Showers", "cloud.heavyrain.fill")
+            return ("Showers", "cloud.heavyrain.fill", 0x03)
         case 95, 96, 99:
-            return ("Thunderstorm", "cloud.bolt.rain.fill")
+            return ("Thunderstorm", "cloud.bolt.rain.fill", 0x02)
         default:
-            return ("Fair", isDay ? "sun.max.fill" : "moon.fill")
+            return ("Clear", isDay ? "sun.max.fill" : "moon.fill", 0x05)
         }
     }
 }

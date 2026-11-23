@@ -34,15 +34,18 @@ public final class TripperDashClient: @unchecked Sendable {
     public var listenPort: UInt16 = DashK1GProtocol.phoneListenPort // 2002
     public var isMockMode: Bool = false
     
-    // TFT Digital Homescreen Preferences
+    // TFT Digital Homescreen Preferences (No Speedometer!)
     public var showWeatherOnTFT: Bool = true {
-        didSet { UserDefaults.standard.set(showWeatherOnTFT, forKey: "pref_tft_weather") }
+        didSet {
+            UserDefaults.standard.set(showWeatherOnTFT, forKey: "pref_tft_weather")
+            TFTProjectionService.shared.triggerImmediateFrame()
+        }
     }
     public var showMusicOnTFT: Bool = true {
-        didSet { UserDefaults.standard.set(showMusicOnTFT, forKey: "pref_tft_music") }
-    }
-    public var showSpeedOnTFT: Bool = true {
-        didSet { UserDefaults.standard.set(showSpeedOnTFT, forKey: "pref_tft_speed") }
+        didSet {
+            UserDefaults.standard.set(showMusicOnTFT, forKey: "pref_tft_music")
+            TFTProjectionService.shared.triggerImmediateFrame()
+        }
     }
     public var enableVideoProjection: Bool = true {
         didSet {
@@ -57,11 +60,11 @@ public final class TripperDashClient: @unchecked Sendable {
         }
     }
     
-    // Active Navigation State (only streams turn maneuvers when a route is active)
+    // Active Navigation State (Turn-by-turn bubble is HIDDEN by default when isNavigationActive == false!)
     public var isNavigationActive: Bool = false
     public var activeNavStreet: String = ""
     public var activeNavDistanceMeters: Int = 0
-    public var activeNavIconCode: UInt8 = 0x0B
+    public var activeNavIconCode: UInt8 = DashK1GProtocol.navManeuverContinue
     
     // Live Diagnostic Logs for UI display
     public var diagnosticLogs: [String] = []
@@ -70,7 +73,7 @@ public final class TripperDashClient: @unchecked Sendable {
     private var rxThread: Thread?
     private var isRunning: Bool = false
     private var rollingSeq: UInt8 = 0
-    private var homescreenTickerIndex: Int = 0
+    private var heartbeatTickCount: Int = 0
     
     // Background Timers
     private var heartbeatTimer: DispatchSourceTimer?
@@ -78,11 +81,13 @@ public final class TripperDashClient: @unchecked Sendable {
     private var projHeartbeatTimer: DispatchSourceTimer?
     private var authTimeoutTimer: DispatchSourceTimer?
     
-    // RSA Handshake State
+    // RSA & AES Session Handshake State
     private var dashModulusHex: String? = nil
     private var dashExponentHex: String? = nil
+    private var sessionAESKey: Data? = nil
     private var sessionKeySent: Bool = false
     private var authRetries: Int = 0
+    private var callWasActiveLastTick: Bool = false
     
     private let queue = DispatchQueue(label: "com.tripperdash.client", qos: .userInteractive)
     private let heartbeatQueue = DispatchQueue(label: "com.tripperdash.heartbeat", qos: .userInteractive)
@@ -99,9 +104,6 @@ public final class TripperDashClient: @unchecked Sendable {
         }
         if UserDefaults.standard.object(forKey: "pref_tft_music") != nil {
             self.showMusicOnTFT = UserDefaults.standard.bool(forKey: "pref_tft_music")
-        }
-        if UserDefaults.standard.object(forKey: "pref_tft_speed") != nil {
-            self.showSpeedOnTFT = UserDefaults.standard.bool(forKey: "pref_tft_speed")
         }
         if UserDefaults.standard.object(forKey: "pref_tft_video") != nil {
             self.enableVideoProjection = UserDefaults.standard.bool(forKey: "pref_tft_video")
@@ -154,13 +156,13 @@ public final class TripperDashClient: @unchecked Sendable {
         self.connectionState = .verifyingNetwork
         self.dashModulusHex = nil
         self.dashExponentHex = nil
+        self.sessionAESKey = nil
         self.sessionKeySent = false
         self.authRetries = 0
         self.isMockMode = false
         
         log("Initiating connection to Dash at \(targetIP):\(port) (RX listening on port \(listenPort))...")
         
-        // 1. Verify Local Wi-Fi Subnet
         if let localIP = getLocalWiFiIP() {
             log("Local iPhone Wi-Fi IP: \(localIP)")
             if !localIP.hasPrefix("192.168.1.") && !localIP.hasPrefix("192.168.") {
@@ -186,16 +188,16 @@ public final class TripperDashClient: @unchecked Sendable {
         connectionState = .requestingAuth
         log("🧪 [MOCK DASH] Simulating Royal Enfield Himalayan 450 TFT...")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.isMockMode else { return }
             self.connectionState = .exchangingKeys
             self.log("🧪 [MOCK DASH] Dash exchanged RSA-1024 public key.")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self = self, self.isMockMode else { return }
                 self.connectionState = .connected
                 self.log("🎉 *** [MOCK DASH] AUTHENTICATION OK (07 01 01) ***")
-                self.log("✅ Simulation Active: Cockpit, Navigation & Controls unlocked.")
+                self.log("✅ Simulation Active: Digital Homescreen & Controls ready.")
                 BackgroundKeepAliveService.shared.startKeepAlive()
                 self.enterNavigationMode()
             }
@@ -212,7 +214,7 @@ public final class TripperDashClient: @unchecked Sendable {
         TFTProjectionService.shared.stopStreaming()
         isMockMode = false
         
-        // Send projection teardown TLVs if was running
+        // Clean teardown TLVs so the dash returns cleanly to its menu
         if isRunning {
             if let stopPkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_h_proj_stop) {
                 sendRawPacket(DashK1GProtocol.patchSequence(data: stopPkt, seq: nextSeq()))
@@ -220,6 +222,9 @@ public final class TripperDashClient: @unchecked Sendable {
             if let offPkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_x_proj_off) {
                 sendRawPacket(DashK1GProtocol.patchSequence(data: offPkt, seq: nextSeq()))
             }
+            // Send BACK (06 80 0001 12) + 05 17 AA session boundary
+            sendRawPacket(DashK1GProtocol.buildButtonAck(buttonByte: 0x12, seq: nextSeq()))
+            sendRawPacket(DashK1GProtocol.buildSingleTLVPacket(type: 0x05, sub: 0x17, payload: [0xAA], seq: nextSeq()))
         }
         
         isRunning = false
@@ -253,7 +258,6 @@ public final class TripperDashClient: @unchecked Sendable {
         setsockopt(socketFD, SOL_SOCKET, SO_REUSEPORT, &optVal, socklen_t(MemoryLayout<Int32>.size))
         setsockopt(socketFD, SOL_SOCKET, SO_BROADCAST, &optVal, socklen_t(MemoryLayout<Int32>.size))
         
-        // Bind to port 2002 on all interfaces (0.0.0.0:2002) to absorb dash->phone packets
         var bindAddr = sockaddr_in()
         bindAddr.sin_family = sa_family_t(AF_INET)
         bindAddr.sin_port = listenPort.bigEndian
@@ -274,30 +278,33 @@ public final class TripperDashClient: @unchecked Sendable {
         
         isRunning = true
         
-        // Start Background Receiver Thread on Port 2002 BEFORE sending burst
         startRXThread()
         
-        // Send Initial K1G Burst to port 2000
         DispatchQueue.main.async { self.connectionState = .requestingAuth }
         sendInitialK1GBurst()
         
-        // Start 8-second timeout for Dash response
         startAuthTimeout()
     }
     
     private func sendInitialK1GBurst() {
-        log("Sending K1G Announcement Burst + Auth Request (q3c.e) to \(dashIP):\(bikePort)...")
+        log("Sending K1G Announcement Burst + Real Clock Sync + Auth Request (q3c.e) to \(dashIP):\(bikePort)...")
         
-        for h in DashK1GProtocol.initialBurstHex {
-            if let hex = h {
-                if let raw = DashAuthCrypto.hexToData(hex) {
-                    let seqPkt = DashK1GProtocol.patchSequence(data: raw, seq: nextSeq())
-                    sendRawPacket(seqPkt)
-                }
-            } else {
-                let hostPkt = DashK1GProtocol.buildHostnameAnnounce(hostname: "iPhone", seq: nextSeq())
-                sendRawPacket(hostPkt)
-            }
+        let battery = BatteryOptimizationService.shared
+        let weather = WeatherService.shared
+        let media = MediaPlaybackService.shared
+        
+        let packets = DashK1GProtocol.buildInitialBurstPackets(
+            hostname: "iPhone",
+            batteryPct: battery.batteryLevelPercent,
+            charging: battery.isCharging,
+            weatherIcon: weather.isLoaded ? weather.dashWeatherIcon : 0xFF,
+            tempC: weather.isLoaded ? weather.temperatureC : nil,
+            volumePercent: media.volumePercent,
+            nextSeq: { self.nextSeq() }
+        )
+        
+        for pkt in packets {
+            sendRawPacket(pkt)
             Thread.sleep(forTimeInterval: 0.02)
         }
     }
@@ -367,19 +374,16 @@ public final class TripperDashClient: @unchecked Sendable {
     
     private func handleAuthSegment(_ seg: DashK1GProtocol.K1GSegment) {
         if seg.sub == 0x00 {
-            // Modulus received (07 00)
             let modHex = seg.payload.map { String(format: "%02X", $0) }.joined()
             self.dashModulusHex = modHex
             log("Dash → Sent RSA Public Key Modulus (\(seg.payload.count) B)")
             checkAndSendSessionKey()
         } else if seg.sub == 0x03 {
-            // Exponent received (07 03)
             let expHex = seg.payload.map { String(format: "%02X", $0) }.joined()
             self.dashExponentHex = expHex
             log("Dash → Sent RSA Public Key Exponent: 0x\(expHex)")
             checkAndSendSessionKey()
         } else if seg.sub == 0x01 {
-            // Auth Status (07 01)
             let status = seg.payload.first ?? 0x00
             if status == 0x01 {
                 log("🎉 *** DASH AUTHENTICATION OK (07 01 01) ***")
@@ -390,7 +394,6 @@ public final class TripperDashClient: @unchecked Sendable {
                     BackgroundKeepAliveService.shared.startKeepAlive()
                 }
                 
-                // Drive Dash into Navigation Mode
                 enterNavigationMode()
             } else {
                 authRetries += 1
@@ -419,6 +422,7 @@ public final class TripperDashClient: @unchecked Sendable {
         do {
             var aesKey = Data(count: 32)
             _ = aesKey.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+            self.sessionAESKey = aesKey
             
             let ciphertext = try DashAuthCrypto.encryptSessionKey(
                 ssid: dashSSID,
@@ -440,7 +444,7 @@ public final class TripperDashClient: @unchecked Sendable {
     private func handleDashCommandOrButton(_ seg: DashK1GProtocol.K1GSegment) {
         let segHex = seg.hexString.uppercased()
         
-        // 1. Mandatory IDR Frame Decoded ACK (09 06 0001 55 -> reply with q3c.L2)
+        // 1. Mandatory IDR Frame Decoded ACK (09 06 0001 55 -> reply with q3c.L2 = 06 11 0001 55)
         if segHex.hasPrefix("09060001") && segHex.hasSuffix("55") {
             if let l2Data = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_l2) {
                 sendRawPacket(DashK1GProtocol.patchSequence(data: l2Data, seq: nextSeq()))
@@ -448,45 +452,68 @@ public final class TripperDashClient: @unchecked Sendable {
             return
         }
         
-        // 2. Handlebar Button Events (09 00 0001 XX)
-        if segHex.hasPrefix("09000001") && seg.payload.count >= 1 {
-            let buttonByte = seg.payload.last ?? 0
-            
-            // Crucial: Send echo-ack (06 80 0001 XX) so the dash registers button receipt
-            let ackPkt = DashK1GProtocol.buildButtonAck(buttonByte: buttonByte, seq: nextSeq())
-            sendRawPacket(ackPkt)
-            
-            switch buttonByte {
-            case 0x13, 0x02:
-                log("🎮 Handlebar Joystick: RIGHT")
-                dispatchJoystick(.right)
-            case 0x14, 0x01:
-                log("🎮 Handlebar Joystick: LEFT")
-                dispatchJoystick(.left)
-            case 0x15, 0x03:
-                log("🎮 Handlebar Joystick: DOWN")
-                dispatchJoystick(.down)
-            case 0x18, 0x04:
-                log("🎮 Handlebar Joystick: CENTER CLICK")
-                dispatchJoystick(.centerClick)
-            case 0x05:
-                log("🎮 Handlebar Joystick: UP")
-                dispatchJoystick(.up)
-            case 0xFE:
-                log("📞 Remote Command: Simulate Incoming Call")
-                CallHandlingService.shared.simulateIncomingCall(caller: "Royal Enfield Rider")
-            default:
-                log("🎮 Unknown button byte: 0x\(String(format: "%02X", buttonByte))")
+        // 2. P-Frame Decoded ACK (09 04 0001 55 -> reply with q3c.K2 = 06 12 0001 55)
+        if segHex.hasPrefix("09040001") && segHex.hasSuffix("55") {
+            if let k2Data = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_k2) {
+                sendRawPacket(DashK1GProtocol.patchSequence(data: k2Data, seq: nextSeq()))
             }
             return
         }
         
-        // 3. Other firmware command ACKs
-        if segHex.hasPrefix("09040001") && segHex.hasSuffix("55") {
-            if let k2 = DashAuthCrypto.hexToData("0016000200000000020100054B314720000612000155") {
-                sendRawPacket(DashK1GProtocol.patchSequence(data: k2, seq: nextSeq()))
+        // 3. Handlebar Joystick Button Events (09 00 0001 XX)
+        // Supports BOTH Dash Map Mode (0x13, 0x14, 0x15, 0x12, 0x18) AND Dash Media Mode (0x05, 0x06, 0x07, 0x09, 0x0A)!
+        if segHex.hasPrefix("09000001") && seg.payload.count >= 1 {
+            let buttonByte = seg.payload.last ?? 0
+            
+            // Immediate Echo ACK (06 80 0001 XX) + Zoom Icons if map-mode button
+            let ackPkt = DashK1GProtocol.buildButtonAck(buttonByte: buttonByte, seq: nextSeq())
+            sendRawPacket(ackPkt)
+            if buttonByte == 0x13 || buttonByte == 0x14 || buttonByte == 0x15 {
+                if let zoomData = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_zoom_icons) {
+                    sendRawPacket(DashK1GProtocol.patchSequence(data: zoomData, seq: nextSeq()))
+                }
             }
-        } else if segHex.hasPrefix("090A0001") && segHex.hasSuffix("55") {
+            
+            switch buttonByte {
+            case 0x09, 0x13, 0x02:
+                // 0x09 = Media Mode Next Track, 0x13 = Map Mode Right
+                log("🎮 Handlebar Joystick: RIGHT → Next Track (0x\(String(format: "%02X", buttonByte)))")
+                dispatchJoystick(.right)
+            case 0x0A, 0x14, 0x01:
+                // 0x0A = Media Mode Previous Track, 0x14 = Map Mode Left
+                log("🎮 Handlebar Joystick: LEFT → Previous Track (0x\(String(format: "%02X", buttonByte)))")
+                dispatchJoystick(.left)
+            case 0x06:
+                // 0x06 = Media Mode Volume Up
+                log("🎮 Handlebar Joystick: UP → Volume Up (0x06)")
+                dispatchJoystick(.up)
+            case 0x07, 0x15, 0x03:
+                // 0x07 = Media Mode Volume Down, 0x15 = Map Mode Down
+                log("🎮 Handlebar Joystick: DOWN → Volume Down (0x\(String(format: "%02X", buttonByte)))")
+                dispatchJoystick(.down)
+            case 0x05, 0x04:
+                // 0x05 = Media Mode Center Click (Play / Pause)
+                log("🎮 Handlebar Joystick: CENTER → Play / Pause (0x05)")
+                dispatchJoystick(.centerClick)
+            case 0x18:
+                // 0x18 = Map Mode Center Click (Enters Dash Media Mode)
+                log("🎛️ Handlebar Joystick: CENTER → Media Control Mode Active (0x18)")
+                dispatchJoystick(.mediaModeEnter)
+            case 0x12:
+                // 0x12 = Joystick Back / Up (Exits Media Mode)
+                log("🎛️ Handlebar Joystick: BACK / UP (0x12)")
+                dispatchJoystick(.mediaModeBack)
+            case 0xFE:
+                log("📞 Remote Command: Simulate Incoming Call")
+                CallHandlingService.shared.simulateIncomingCall(caller: "Royal Enfield Rider")
+            default:
+                log("🎮 Handlebar Event: 0x\(String(format: "%02X", buttonByte))")
+            }
+            return
+        }
+        
+        // 4. Other firmware command ACKs
+        if segHex.hasPrefix("090A0001") && segHex.hasSuffix("55") {
             if let t2 = DashAuthCrypto.hexToData("0016000200000000020100054B31472000068000010A") {
                 sendRawPacket(DashK1GProtocol.patchSequence(data: t2, seq: nextSeq()))
             }
@@ -495,54 +522,74 @@ public final class TripperDashClient: @unchecked Sendable {
     
     // MARK: - Post-Auth Digital Homescreen & Projection Sequence
     private func enterNavigationMode() {
-        log("Activating TFT Digital Homescreen (Weather, Music & Calls)...")
+        log("Activating Clean TFT Digital Homescreen (Turn-by-Turn Hidden, Real Clock & Music Active)...")
         
         // 1. Navigation Context + Empty Lists
         for hex in [DashK1GProtocol.q3c_q_nav_ctx, DashK1GProtocol.q3c_r_empty_lists] {
             if let data = DashAuthCrypto.hexToData(hex) {
                 sendRawPacket(DashK1GProtocol.patchSequence(data: data, seq: nextSeq()))
-                Thread.sleep(forTimeInterval: 0.05)
+                Thread.sleep(forTimeInterval: 0.04)
             }
         }
         
-        // 2. Pre-z2 Homescreen Surface Burst (establishes Digital Mode projection surface)
+        // 2. Pre-z2 Homescreen Surface Burst (with turn-by-turn bubble HIDDEN: maneuver = 0xFF)
         let bannerTitle = buildHomescreenBannerTitle()
-        let routePkt = DashK1GProtocol.buildRouteCardPacket(title: bannerTitle, seq: nextSeq(), projectionOn: false)
-        for _ in 0..<4 {
+        for i in 0..<4 {
+            let routePkt = DashK1GProtocol.buildRouteCardPacket(
+                title: bannerTitle,
+                seq: nextSeq(),
+                projectionOn: false,
+                isNavigating: isNavigationActive,
+                maneuver: activeNavIconCode,
+                totalDistanceMeters: activeNavDistanceMeters
+            )
             sendRawPacket(routePkt)
-            Thread.sleep(forTimeInterval: 0.25)
+            Thread.sleep(forTimeInterval: i == 0 ? 0.10 : 0.25)
         }
         
-        // 3. Projection Frame Heartbeat (q3c.g)
+        // 3. Projection Frame Heartbeat (q3c.g) + Nav Placeholder (06 0A 0002 0000)
         if let gPkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_g_proj_frame) {
             sendRawPacket(DashK1GProtocol.patchSequence(data: gPkt, seq: nextSeq()))
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if let phPkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_nav_placeholder) {
+            sendRawPacket(DashK1GProtocol.patchSequence(data: phPkt, seq: nextSeq()))
+            Thread.sleep(forTimeInterval: 0.02)
         }
         
         // 4. Start Digital Surface Projection Command (q3c.z2)
         if let z2Pkt = DashAuthCrypto.hexToData(DashK1GProtocol.q3c_z2_start_nav) {
             sendRawPacket(DashK1GProtocol.patchSequence(data: z2Pkt, seq: nextSeq()))
+            Thread.sleep(forTimeInterval: 0.04)
         }
         
-        // 5. Post-z2 confirmation card with projection ON
-        let routePktOn = DashK1GProtocol.buildRouteCardPacket(title: bannerTitle, seq: nextSeq(), projectionOn: true)
+        // 5. Post-z2 confirmation card with projection ON & turn-by-turn bubble HIDDEN
+        let routePktOn = DashK1GProtocol.buildRouteCardPacket(
+            title: bannerTitle,
+            seq: nextSeq(),
+            projectionOn: true,
+            isNavigating: isNavigationActive,
+            maneuver: activeNavIconCode,
+            totalDistanceMeters: activeNavDistanceMeters
+        )
         sendRawPacket(routePktOn)
         
-        // 6. Push initial Weather & Music metadata immediately
-        sendWeatherUpdate()
+        // 6. Push initial Real Time Sync + Music Now-Playing Cards immediately
+        sendRawPacket(DashK1GProtocol.buildTimeSyncPacket(seq: nextSeq()))
         let media = MediaPlaybackService.shared
-        sendMusicUpdate(title: media.currentTitle, artist: media.currentArtist, isPlaying: media.isPlaying)
+        sendMusicUpdate(title: media.currentTitle, album: media.currentAlbum, artist: media.currentArtist, isPlaying: media.isPlaying)
         
         // 7. Start H.264 Digital Homescreen Video Stream (UDP 5000) if enabled & real socket connected
         if enableVideoProjection && !isMockMode {
             TFTProjectionService.shared.startStreaming(to: dashIP)
         }
         
-        // 8. Start Keepalive Loops (Live Heartbeat + Homescreen/Nav + Projection Frame)
+        // 8. Start Keepalive Loops (Live 0049 Heartbeat + Clean Route Card + Music/Call Cards + 4Hz Projection Frame)
         startAllKeepalives()
-        log("✅ TFT Digital Homescreen active & synced.")
+        log("✅ TFT Digital Homescreen active & synced in real time.")
     }
     
-    /// Builds the live UTF-8 TFT banner string (Weather + Now Playing when idle, Street when navigating)
+    /// Builds the clean Latin-1 TFT banner string (Weather + Now Playing when idle, Street when navigating)
     private func buildHomescreenBannerTitle() -> String {
         if isNavigationActive && !activeNavStreet.isEmpty {
             return activeNavStreet
@@ -552,31 +599,32 @@ public final class TripperDashClient: @unchecked Sendable {
             return "Call: \(call.callerName)"
         }
         if call.isOngoing {
-            return "On Call \(call.formattedDuration) · \(call.callerName)"
+            return "In Call \(call.formattedDuration) - \(call.callerName)"
         }
         
         let weather = WeatherService.shared
         let media = MediaPlaybackService.shared
         
         var parts: [String] = []
-        if showWeatherOnTFT {
+        if showWeatherOnTFT && weather.isLoaded {
             parts.append(weather.compactTFTString)
         }
         if showMusicOnTFT && media.currentTitle != "Not Playing" && !media.currentTitle.isEmpty {
-            parts.append("♪ \(media.currentTitle)")
+            parts.append(media.currentTitle)
         }
         
         if parts.isEmpty {
-            return "TripperDash Ready"
+            return "TripperDash"
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: " - ")
     }
     
     // MARK: - Timers & Keepalives
     private func startAllKeepalives() {
         stopAllTimers()
+        heartbeatTickCount = 0
         
-        // Timer 1: 1 Hz Live Status Heartbeat (0044 + 0030) with REAL Battery, Weather Temp, Music & Call State
+        // Timer 1: 1 Hz Authentic 0049 Status Heartbeat (Real Battery, Real Weather Icon & Temp, Real Volume, Real Clock Sync)
         let hbTimer = DispatchSource.makeTimerSource(flags: .strict, queue: heartbeatQueue)
         hbTimer.schedule(deadline: .now(), repeating: .milliseconds(1000), leeway: .milliseconds(50))
         hbTimer.setEventHandler { [weak self] in
@@ -587,37 +635,44 @@ public final class TripperDashClient: @unchecked Sendable {
             let media = MediaPlaybackService.shared
             let call = CallHandlingService.shared
             
-            let callCode: UInt8 = call.isRinging ? 0x31 : (call.isOngoing ? 0x32 : 0x30)
+            // Authentic CallState codes: 0x0A = Ringing, 0x14 = In-Call, 0x32 = None
+            let callCode: UInt8 = call.isRinging ? 0x0A : (call.isOngoing ? 0x14 : 0x32)
             
-            let hb0044 = K1GPacket.makeHeartbeatPacket(
+            let hb0049 = K1GPacket.makeHeartbeatPacket(
                 batteryPct: battery.batteryLevelPercent,
                 charging: battery.isCharging,
                 gpsOn: true,
-                tempC: weather.temperatureC,
-                cellSignal: 255,
-                isMusicPlaying: media.isPlaying,
+                weatherIcon: (self.showWeatherOnTFT && weather.isLoaded) ? weather.dashWeatherIcon : 0xFF,
+                tempC: (self.showWeatherOnTFT && weather.isLoaded) ? weather.temperatureC : nil,
+                volumePercent: media.volumePercent,
                 callStatusCode: callCode
             )
-            self.sendRawPacket(DashK1GProtocol.patchSequence(data: hb0044, seq: self.nextSeq()))
+            self.sendRawPacket(DashK1GProtocol.patchSequence(data: hb0049, seq: self.nextSeq()))
             
-            let hb0030 = K1GPacket.makeMetadata0030Packet(
-                cellSignal: 255,
-                isMusicPlaying: media.isPlaying,
-                callStatusCode: callCode
-            )
-            self.sendRawPacket(DashK1GProtocol.patchSequence(data: hb0030, seq: self.nextSeq()))
+            // Keep Dash Clock 100% real-time (resync every 15 seconds)
+            self.heartbeatTickCount += 1
+            if self.heartbeatTickCount % 15 == 0 {
+                self.sendRawPacket(DashK1GProtocol.buildTimeSyncPacket(seq: self.nextSeq()))
+            }
         }
         hbTimer.resume()
         self.heartbeatTimer = hbTimer
         
-        // Timer 2: 1 Hz TFT Homescreen / Route Card Keep-alive (Prevents 15s watchdog timeout)
+        // Timer 2: 1 Hz TFT Homescreen Route Card (Turn-by-Turn Hidden when idle) + Authentic Music/Call Cards
         let rcTimer = DispatchSource.makeTimerSource(flags: .strict, queue: heartbeatQueue)
-        rcTimer.schedule(deadline: .now() + 1.0, repeating: .milliseconds(1000), leeway: .milliseconds(50))
+        rcTimer.schedule(deadline: .now() + 0.5, repeating: .milliseconds(1000), leeway: .milliseconds(50))
         rcTimer.setEventHandler { [weak self] in
             guard let self = self, self.connectionState == .connected else { return }
             
             let banner = self.buildHomescreenBannerTitle()
-            let rcPkt = DashK1GProtocol.buildRouteCardPacket(title: banner, seq: self.nextSeq(), projectionOn: true)
+            let rcPkt = DashK1GProtocol.buildRouteCardPacket(
+                title: banner,
+                seq: self.nextSeq(),
+                projectionOn: true,
+                isNavigating: self.isNavigationActive,
+                maneuver: self.activeNavIconCode,
+                totalDistanceMeters: self.activeNavDistanceMeters
+            )
             self.sendRawPacket(rcPkt)
             
             // ONLY stream turn-by-turn maneuver cards when a route is actively being navigated!
@@ -626,20 +681,52 @@ public final class TripperDashClient: @unchecked Sendable {
                     maneuver: self.activeNavIconCode,
                     nextMeters: self.activeNavDistanceMeters,
                     totalMeters: self.activeNavDistanceMeters,
+                    roadName: self.activeNavStreet,
                     seq: self.nextSeq()
                 )
                 self.sendRawPacket(navInfo)
             }
             
-            // Every 5 seconds refresh rich Weather + Music TLVs on TFT Homescreen
-            self.homescreenTickerIndex += 1
-            if self.homescreenTickerIndex % 5 == 0 {
-                if self.showWeatherOnTFT {
-                    self.sendWeatherUpdate()
+            // Repeat Authentic Music Now-Playing Cards (05 17, 05 0D, 05 58, 05 19) at 1 Hz
+            if self.showMusicOnTFT {
+                let media = MediaPlaybackService.shared
+                let musicPkts = K1GPacket.makeMusicCardPackets(
+                    title: media.currentTitle,
+                    album: media.currentAlbum,
+                    artist: media.currentArtist,
+                    isPlaying: media.isPlaying,
+                    nextSeq: { self.nextSeq() }
+                )
+                for p in musicPkts {
+                    self.sendRawPacket(p)
                 }
-                if self.showMusicOnTFT {
-                    let media = MediaPlaybackService.shared
-                    self.sendMusicUpdate(title: media.currentTitle, artist: media.currentArtist, isPlaying: media.isPlaying)
+            }
+            
+            // Repeat Authentic Call Cards (05 21, 05 4D, AES-encrypted 05 22) when a call is active
+            let call = CallHandlingService.shared
+            if call.isRinging || call.isOngoing {
+                self.callWasActiveLastTick = true
+                let callPkts = K1GPacket.makeCallCardPackets(
+                    callerName: call.callerName,
+                    isRinging: call.isRinging,
+                    isOngoing: call.isOngoing,
+                    aesKey: self.sessionAESKey,
+                    nextSeq: { self.nextSeq() }
+                )
+                for p in callPkts {
+                    self.sendRawPacket(p)
+                }
+            } else if self.callWasActiveLastTick {
+                self.callWasActiveLastTick = false
+                let clearPkts = K1GPacket.makeCallCardPackets(
+                    callerName: "",
+                    isRinging: false,
+                    isOngoing: false,
+                    aesKey: self.sessionAESKey,
+                    nextSeq: { self.nextSeq() }
+                )
+                for p in clearPkts {
+                    self.sendRawPacket(p)
                 }
             }
         }
@@ -673,13 +760,9 @@ public final class TripperDashClient: @unchecked Sendable {
     public func sendRawPacket(_ data: Data) {
         guard socketFD >= 0 else { return }
         
-        // 1. Send Unicast to Bike (192.168.1.1:2000)
         sendToHost(data, host: dashIP, port: bikePort)
-        
-        // 2. Send Broadcast to Subnet (192.168.1.255:2000)
         sendToHost(data, host: broadcastIP, port: bikePort)
         
-        // 3. Fallback to 2002 for firmware variants
         if bikePort != listenPort {
             sendToHost(data, host: dashIP, port: listenPort)
         }
@@ -714,11 +797,13 @@ public final class TripperDashClient: @unchecked Sendable {
             self.activeNavIconCode = iconCode
             self.activeNavDistanceMeters = Int(distanceMeters)
             self.activeNavStreet = streetName
+            TFTProjectionService.shared.triggerImmediateFrame()
         }
         let packet = DashK1GProtocol.buildActiveNavPacket(
             maneuver: iconCode,
             nextMeters: Int(distanceMeters),
             totalMeters: Int(distanceMeters),
+            roadName: streetName,
             seq: nextSeq()
         )
         sendRawPacket(packet)
@@ -729,34 +814,84 @@ public final class TripperDashClient: @unchecked Sendable {
             self.isNavigationActive = false
             self.activeNavStreet = ""
             self.activeNavDistanceMeters = 0
+            TFTProjectionService.shared.triggerImmediateFrame()
         }
-        log("🧭 Returned TFT to Digital Homescreen (Weather & Music)")
+        // Immediately send clean route card with maneuver = 0xFF to hide turn-by-turn bubble
+        let rcPkt = DashK1GProtocol.buildRouteCardPacket(
+            title: buildHomescreenBannerTitle(),
+            seq: nextSeq(),
+            projectionOn: true,
+            isNavigating: false
+        )
+        sendRawPacket(rcPkt)
+        log("🧭 Returned TFT to Clean Digital Homescreen (Turn-by-Turn Hidden)")
     }
     
-    public func sendMusicUpdate(title: String, artist: String, isPlaying: Bool) {
-        let vol = MediaPlaybackService.shared.volumePercent
-        let packet = K1GPacket.makeMusicInfoPacket(title: title, artist: artist, isPlaying: isPlaying, volumePercent: vol)
-        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
+    public func sendMusicUpdate(title: String, album: String = "", artist: String, isPlaying: Bool) {
+        guard connectionState == .connected else { return }
+        let packets = K1GPacket.makeMusicCardPackets(
+            title: title,
+            album: album,
+            artist: artist,
+            isPlaying: isPlaying,
+            nextSeq: { self.nextSeq() }
+        )
+        for p in packets {
+            sendRawPacket(p)
+        }
+        // Also update the route card banner & heartbeat volume immediately
+        let rcPkt = DashK1GProtocol.buildRouteCardPacket(
+            title: buildHomescreenBannerTitle(),
+            seq: nextSeq(),
+            projectionOn: true,
+            isNavigating: isNavigationActive,
+            maneuver: activeNavIconCode,
+            totalDistanceMeters: activeNavDistanceMeters
+        )
+        sendRawPacket(rcPkt)
+        TFTProjectionService.shared.triggerImmediateFrame()
     }
     
     public func sendWeatherUpdate() {
-        let w = WeatherService.shared
-        let packet = K1GPacket.makeWeatherPacket(
-            tempC: w.temperatureC,
-            condition: w.conditionText,
-            location: w.locationName,
-            windKmh: w.windSpeedKmh
+        guard connectionState == .connected else { return }
+        let battery = BatteryOptimizationService.shared
+        let weather = WeatherService.shared
+        let media = MediaPlaybackService.shared
+        let call = CallHandlingService.shared
+        let callCode: UInt8 = call.isRinging ? 0x0A : (call.isOngoing ? 0x14 : 0x32)
+        
+        let hb0049 = K1GPacket.makeHeartbeatPacket(
+            batteryPct: battery.batteryLevelPercent,
+            charging: battery.isCharging,
+            gpsOn: true,
+            weatherIcon: (showWeatherOnTFT && weather.isLoaded) ? weather.dashWeatherIcon : 0xFF,
+            tempC: (showWeatherOnTFT && weather.isLoaded) ? weather.temperatureC : nil,
+            volumePercent: media.volumePercent,
+            callStatusCode: callCode
         )
-        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
+        sendRawPacket(DashK1GProtocol.patchSequence(data: hb0049, seq: nextSeq()))
+        TFTProjectionService.shared.triggerImmediateFrame()
     }
     
     public func sendCallAlert(callerName: String, isRinging: Bool, isOngoing: Bool, durationSeconds: UInt32) {
-        let packet = K1GPacket.makeCallAlertPacket(callerName: callerName, isRinging: isRinging, isOngoing: isOngoing, durationSeconds: durationSeconds)
-        sendRawPacket(DashK1GProtocol.patchSequence(data: packet, seq: nextSeq()))
+        guard connectionState == .connected else {
+            TFTProjectionService.shared.triggerImmediateFrame()
+            return
+        }
+        let packets = K1GPacket.makeCallCardPackets(
+            callerName: callerName,
+            isRinging: isRinging,
+            isOngoing: isOngoing,
+            aesKey: sessionAESKey,
+            nextSeq: { self.nextSeq() }
+        )
+        for p in packets {
+            sendRawPacket(p)
+        }
+        TFTProjectionService.shared.triggerImmediateFrame()
     }
     
     private func dispatchJoystick(_ event: DashJoystickEvent) {
-        // Always execute joystick actions on MainActor so CallHandlingService & MediaPlaybackService state is 100% thread-safe!
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.lastJoystickEvent = event
@@ -766,7 +901,7 @@ public final class TripperDashClient: @unchecked Sendable {
             
             // Priority 1: Incoming / Ongoing Phone Calls
             if callService.isRinging {
-                if event == .centerClick || event == .up {
+                if event == .centerClick || event == .mediaModeEnter || event == .up || event == .mediaModeBack {
                     self.log("📞 Answering incoming call via handlebar...")
                     callService.answerCall()
                     return
@@ -776,7 +911,7 @@ public final class TripperDashClient: @unchecked Sendable {
                     return
                 }
             } else if callService.isOngoing {
-                if event == .down || event == .centerClick {
+                if event == .down || event == .centerClick || event == .mediaModeEnter {
                     self.log("📞 Ending ongoing call via handlebar...")
                     callService.endOrRejectCall()
                     return
@@ -786,15 +921,32 @@ public final class TripperDashClient: @unchecked Sendable {
             // Priority 2: Riding Controls (Music playback & System Volume)
             switch event {
             case .centerClick:
+                // 0x05 = Media Mode Play / Pause
                 mediaService.togglePlayPause()
             case .right:
+                // 0x09 (Media Mode Next) or 0x13 (Map Mode Right)
                 mediaService.nextTrack()
             case .left:
+                // 0x0A (Media Mode Prev) or 0x14 (Map Mode Left)
                 mediaService.previousTrack()
             case .up:
+                // 0x06 (Media Mode Volume Up)
                 mediaService.volumeUp()
             case .down:
+                // 0x07 (Media Mode Volume Down) or 0x15 (Map Mode Down)
                 mediaService.volumeDown()
+            case .mediaModeEnter:
+                // 0x18 = First Center Click on Map Screen that opens Dash Media Mode:
+                // Do NOT auto-play or change volume! Just push fresh song metadata to the dash.
+                self.sendMusicUpdate(
+                    title: mediaService.currentTitle,
+                    album: mediaService.currentAlbum,
+                    artist: mediaService.currentArtist,
+                    isPlaying: mediaService.isPlaying
+                )
+            case .mediaModeBack:
+                // 0x12 = Exited Media Mode on Dash
+                TFTProjectionService.shared.triggerImmediateFrame()
             }
         }
     }

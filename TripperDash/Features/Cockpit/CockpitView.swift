@@ -11,7 +11,6 @@ public struct CockpitView: View {
     @Bindable var weather: WeatherService = WeatherService.shared
     @Bindable var projection: TFTProjectionService = TFTProjectionService.shared
     
-    @State private var showTFTPreview: Bool = false
     let onRideSaved: (RideRecord) -> Void
     
     public init(
@@ -43,7 +42,7 @@ public struct CockpitView: View {
                 AppTheme.background.ignoresSafeArea()
                 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 18) {
                         // Minimal Header: Bike Identity + Live Link Pill
                         HStack(alignment: .center) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -84,19 +83,26 @@ public struct CockpitView: View {
                             weather.refresh(for: tracker.currentLocation, force: true)
                         }) {
                             HStack(spacing: 10) {
-                                Image(systemName: weather.symbolName)
+                                Image(systemName: weather.isLoaded ? weather.symbolName : "location.fill")
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(AppTheme.accent)
                                 
-                                Text("\(weather.temperatureC)°")
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(AppTheme.textPrimary)
-                                
-                                Text("\(weather.conditionText) · \(weather.locationName)")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(AppTheme.textSecondary)
-                                    .lineLimit(1)
+                                if weather.isLoaded {
+                                    Text("\(weather.temperatureC)°C")
+                                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                        .monospacedDigit()
+                                        .foregroundColor(AppTheme.textPrimary)
+                                    
+                                    Text(weather.locationName.isEmpty ? weather.conditionText : "\(weather.conditionText) · \(weather.locationName)")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                        .lineLimit(1)
+                                } else {
+                                    Text(weather.isRefreshing ? "Syncing GPS Weather…" : "Tap to Sync Local Weather")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(AppTheme.textSecondary)
+                                        .lineLimit(1)
+                                }
                                 
                                 Spacer()
                                 
@@ -122,70 +128,57 @@ public struct CockpitView: View {
                         .buttonStyle(.plain)
                         .padding(.horizontal, 20)
                         
-                        // Centerpiece Switcher: Phone Gauge vs Live Bike TFT Digital Homescreen Preview
-                        VStack(spacing: 14) {
-                            HStack(spacing: 4) {
-                                modeTabButton(title: "Gauge", isSelected: !showTFTPreview) {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                        showTFTPreview = false
-                                    }
-                                }
-                                modeTabButton(title: "Bike TFT", isSelected: showTFTPreview) {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                        showTFTPreview = true
-                                    }
-                                }
-                            }
-                            .padding(3)
-                            .background(AppTheme.surface)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(AppTheme.border, lineWidth: 0.6))
+                        // Centerpiece: Live Bike TFT Digital Homescreen Dome Preview (526×300 scaled, Zero Speedometer)
+                        VStack(spacing: 10) {
+                            TFTHomescreenCanvas(
+                                heading: tracker.currentHeading,
+                                weatherLoaded: weather.isLoaded,
+                                weatherTempC: weather.temperatureC,
+                                weatherCondition: weather.conditionText,
+                                weatherSymbol: weather.symbolName,
+                                weatherLocation: weather.locationName,
+                                windKmh: weather.windSpeedKmh,
+                                songTitle: media.currentTitle,
+                                songArtist: media.currentArtist,
+                                isMusicPlaying: media.isPlaying,
+                                volumePercent: media.volumePercent,
+                                batteryPercent: battery.batteryLevelPercent,
+                                isCharging: battery.isCharging,
+                                isCallRinging: call.isRinging,
+                                isCallOngoing: call.isOngoing,
+                                callerName: call.callerName,
+                                callDuration: call.formattedDuration,
+                                showWeather: dashClient.showWeatherOnTFT,
+                                showMusic: dashClient.showMusicOnTFT,
+                                activeNavInstruction: dashClient.isNavigationActive ? dashClient.activeNavStreet : nil,
+                                activeNavDistanceMeters: dashClient.isNavigationActive ? dashClient.activeNavDistanceMeters : nil,
+                                forDashStream: false
+                            )
+                            .scaleEffect(0.64)
+                            .frame(width: 526 * 0.64, height: 300 * 0.64)
+                            .shadow(color: .black.opacity(0.6), radius: 20, y: 6)
                             
-                            if showTFTPreview {
-                                VStack(spacing: 10) {
-                                    TFTHomescreenCanvas(
-                                        speedKmh: tracker.currentSpeedKmh,
-                                        heading: tracker.currentHeading,
-                                        weatherTempC: weather.temperatureC,
-                                        weatherCondition: weather.conditionText,
-                                        weatherSymbol: weather.symbolName,
-                                        weatherLocation: weather.locationName,
-                                        windKmh: weather.windSpeedKmh,
-                                        songTitle: media.currentTitle,
-                                        songArtist: media.currentArtist,
-                                        isMusicPlaying: media.isPlaying,
-                                        volumePercent: media.volumePercent,
-                                        batteryPercent: battery.batteryLevelPercent,
-                                        isCallRinging: call.isRinging,
-                                        isCallOngoing: call.isOngoing,
-                                        callerName: call.callerName,
-                                        callDuration: call.formattedDuration,
-                                        showWeather: dashClient.showWeatherOnTFT,
-                                        showMusic: dashClient.showMusicOnTFT,
-                                        showSpeed: dashClient.showSpeedOnTFT,
-                                        activeNavInstruction: dashClient.isNavigationActive ? dashClient.activeNavStreet : nil,
-                                        activeNavDistanceMeters: dashClient.isNavigationActive ? dashClient.activeNavDistanceMeters : nil
-                                    )
-                                    .frame(width: 264, height: 264)
-                                    .shadow(color: .black.opacity(0.6), radius: 24, y: 8)
-                                    
-                                    Text(projection.isStreaming ? "Streaming live to TFT · \(String(format: "%.1f", projection.currentFPS)) fps" : "Digital Mode Homescreen Preview")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(projection.isStreaming ? AppTheme.emerald : AppTheme.textTertiary)
+                            HStack(spacing: 8) {
+                                Text(projection.isStreaming ? "Streaming live to Bike TFT · \(String(format: "%.1f", projection.currentFPS)) fps" : "Bike TFT Digital Homescreen Preview")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(projection.isStreaming ? AppTheme.emerald : AppTheme.textTertiary)
+                                
+                                if dashClient.isNavigationActive {
+                                    Button("Clear Turn-by-Turn") {
+                                        dashClient.stopNavigation()
+                                    }
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(AppTheme.coral)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(AppTheme.surfaceElevated)
+                                    .clipShape(Capsule())
                                 }
-                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                            } else {
-                                CircularGauge(
-                                    speed: tracker.currentSpeedKmh,
-                                    heading: tracker.currentHeading,
-                                    isRecording: tracker.isRecordingRide
-                                )
-                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
                             }
                         }
                         .padding(.vertical, 4)
                         
-                        // Live Ride Telemetry Card
+                        // Live Ride Telemetry Card (No Speedometer!)
                         GlassCard {
                             if tracker.isRecordingRide {
                                 HStack(spacing: 0) {
@@ -202,9 +195,9 @@ public struct CockpitView: View {
                                     )
                                     dividerLine
                                     StatTile(
-                                        title: "Max",
-                                        value: String(format: "%.0f", tracker.maxSpeedKmh),
-                                        unit: "km/h"
+                                        title: "Elevation",
+                                        value: String(format: "%.0f", tracker.currentAltitude),
+                                        unit: "m"
                                     )
                                 }
                             } else {
@@ -223,8 +216,8 @@ public struct CockpitView: View {
                                     dividerLine
                                     StatTile(
                                         title: "Wind",
-                                        value: "\(weather.windSpeedKmh)",
-                                        unit: "km/h"
+                                        value: weather.isLoaded ? "\(weather.windSpeedKmh)" : "—",
+                                        unit: weather.isLoaded ? "km/h" : ""
                                     )
                                 }
                             }
@@ -351,6 +344,10 @@ public struct CockpitView: View {
                 }
             }
             .navigationBarHidden(true)
+            .onAppear {
+                weather.refresh(for: tracker.currentLocation)
+                media.updateCurrentTrack(silentIfUnchanged: true)
+            }
         }
     }
     
@@ -359,19 +356,6 @@ public struct CockpitView: View {
             .fill(AppTheme.border)
             .frame(width: 0.6, height: 34)
             .padding(.horizontal, 12)
-    }
-    
-    private func modeTabButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isSelected ? .black : AppTheme.textSecondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.white : Color.clear)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
     
     private func formattedTime(_ totalSeconds: Int) -> String {

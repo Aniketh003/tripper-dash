@@ -154,7 +154,7 @@ public struct CockpitView: View {
                                 isCharging: battery.isCharging,
                                 isCallRinging: call.isRinging,
                                 isCallOngoing: call.isOngoing,
-                                callerName: call.callerName,
+                                callerName: call.displayTitle,
                                 callDuration: call.formattedDuration,
                                 showWeather: dashClient.showWeatherOnTFT,
                                 showMusic: dashClient.showMusicOnTFT,

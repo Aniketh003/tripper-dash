@@ -128,15 +128,13 @@ public struct K1GPacket {
         nextSeq: () -> UInt8
     ) -> [Data] {
         let hasTrack = !title.isEmpty && title != "Not Playing"
-        guard hasTrack else {
-            return [
-                DashK1GProtocol.buildSingleTLVPacket(type: 0x05, sub: 0x17, payload: [0xAA], seq: nextSeq())
-            ]
-        }
+        let cleanTitle = hasTrack ? title : "TripperDash"
+        let cleanArtist = hasTrack ? (artist.isEmpty ? "iPhone" : artist) : "Handlebar Ready"
+        let cleanAlbum = album.isEmpty ? cleanArtist : album
 
-        let albumBytes = DashK1GProtocol.latin1Bytes(album.isEmpty ? (artist.isEmpty ? "Music" : artist) : album, maxLength: 19)
-        let titleBytes = DashK1GProtocol.latin1Bytes(title, maxLength: 19)
-        let artistBytes = DashK1GProtocol.latin1Bytes(artist.isEmpty ? "iPhone" : artist, maxLength: 19)
+        let albumBytes = DashK1GProtocol.latin1Bytes(cleanAlbum, maxLength: 19)
+        let titleBytes = DashK1GProtocol.latin1Bytes(cleanTitle, maxLength: 19)
+        let artistBytes = DashK1GProtocol.latin1Bytes(cleanArtist, maxLength: 19)
 
         var nowPlayingPayload: [UInt8] = []
         nowPlayingPayload.append(contentsOf: albumBytes)
@@ -145,6 +143,7 @@ public struct K1GPacket {
         nowPlayingPayload.append(0x00)
         nowPlayingPayload.append(contentsOf: artistBytes)
 
+        // Always keep 05 17 = 0x55 so the TFT Dash never disables handlebar joystick buttons
         return [
             DashK1GProtocol.buildSingleTLVPacket(type: 0x05, sub: 0x17, payload: [0x55], seq: nextSeq()),
             DashK1GProtocol.buildSingleTLVPacket(type: 0x05, sub: 0x0D, payload: nowPlayingPayload, seq: nextSeq()),

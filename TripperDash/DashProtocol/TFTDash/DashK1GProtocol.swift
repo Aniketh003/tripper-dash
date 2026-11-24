@@ -25,9 +25,19 @@ public enum DashK1GProtocol {
     public static let buttonAckPrefix     = "0016000200000000020100054B3147200006800001"
 
     // Maneuver codes
-    public static let navManeuverContinue: UInt8   = 0x09
-    public static let navManeuverArrivalPin: UInt8 = 0x3C
-    public static let navManeuverHidden: UInt8     = 0xFF // Hides turn-by-turn bubble when idle
+    public static let navManeuverArrive: UInt8      = 0x00
+    public static let navManeuverContinue: UInt8    = 0x09
+    public static let navManeuverTurnLeft: UInt8    = 0x14
+    public static let navManeuverTurnRight: UInt8   = 0x15
+    public static let navManeuverSharpLeft: UInt8   = 0x16
+    public static let navManeuverSharpRight: UInt8  = 0x17
+    public static let navManeuverSlightLeft: UInt8  = 0x18
+    public static let navManeuverSlightRight: UInt8 = 0x19
+    public static let navManeuverUTurnRight: UInt8  = 0x1A
+    public static let navManeuverUTurnLeft: UInt8   = 0x1B
+    public static let navManeuverRoundabout: UInt8  = 0x32
+    public static let navManeuverArrivalPin: UInt8  = 0x3C
+    public static let navManeuverHidden: UInt8      = 0xFF // Hides turn-by-turn bubble when idle
 
     // Distance units
     public static let navUnitKmTenths: UInt8 = 0x10 // value = km * 10 (e.g. 24 -> "2.4 km")
@@ -236,20 +246,21 @@ public enum DashK1GProtocol {
         nextTurnMeters: Int = 0,
         totalDistanceMeters: Int = 0,
         remainingSeconds: Int = 0,
+        remainingTimeSeconds: Int = 0,
+        arrivalDate: Date? = nil,
         nextManeuver: UInt8 = 0xFF
     ) -> Data {
         let cleanTitle = title.isEmpty ? "TripperDash" : title
         let titleBytes = latin1Bytes(cleanTitle, maxLength: 58) + [0x00]
 
-        let etaDate = (isNavigating && remainingSeconds > 0) ? Date().addingTimeInterval(TimeInterval(remainingSeconds)) : Date()
+        let effRemSeconds = remainingSeconds > 0 ? remainingSeconds : remainingTimeSeconds
+        let etaDate = arrivalDate ?? ((isNavigating && effRemSeconds > 0) ? Date().addingTimeInterval(TimeInterval(effRemSeconds)) : Date())
         let clockBytes = formatClockHHMM(date: etaDate)
 
-        // Crucial: When a call is ringing/ongoing, the ring must NOT be 0xFF or the dash blocks call joystick buttons!
+        // Keep maneuver hidden (0xFF) whenever not actively navigating so the stock TFT banner never covers our H.264 stream
         let activeManeuver: UInt8
         if isNavigating {
             activeManeuver = (maneuver == navManeuverHidden) ? navManeuverContinue : maneuver
-        } else if isCallActive {
-            activeManeuver = navManeuverArrivalPin
         } else {
             activeManeuver = navManeuverHidden
         }
@@ -293,8 +304,8 @@ public enum DashK1GProtocol {
         tlvs.append([0x05, 0x0C, 0x00, 0x01, prox])
 
         // 9. Remaining Trip Time (05 0B + 05 55) when actively navigating
-        if isNavigating && remainingSeconds > 0 {
-            let rem = encodeRemainingTime(seconds: remainingSeconds)
+        if isNavigating && effRemSeconds > 0 {
+            let rem = encodeRemainingTime(seconds: effRemSeconds)
             if rem.asciiBytes.count == 6 {
                 var t050B: [UInt8] = [0x05, 0x0B, 0x00, 0x06]
                 t050B.append(contentsOf: rem.asciiBytes)

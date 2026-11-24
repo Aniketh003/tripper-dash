@@ -123,7 +123,7 @@ public struct TFTHomescreenCanvas: View {
         case .pureBlack:
             RadialGradient(
                 colors: [
-                    (isCallRinging ? emerald : (isCallOngoing ? amber : Color(red: 0.12, green: 0.14, blue: 0.20))).opacity(0.24),
+                    Color(red: 0.12, green: 0.14, blue: 0.20).opacity(0.24),
                     Color.black
                 ],
                 center: UnitPoint(x: 0.5, y: 0.72),
@@ -383,7 +383,18 @@ public struct TFTHomescreenCanvas: View {
         }
     }
     
-    // MARK: - Incoming / Ongoing Call Card
+    // MARK: - Incoming / Ongoing Call Card (Borderless Minimal OLED Card)
+    private var resolvedCallTitle: String {
+        let trimmed = callerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCallOngoing {
+            if trimmed.isEmpty || trimmed == "Incoming Call" || trimmed == "Outgoing Call" || trimmed == "Active Call" {
+                return "Ongoing Call"
+            }
+            return trimmed
+        }
+        return trimmed.isEmpty ? "Incoming Call" : trimmed
+    }
+    
     private var callOverlayCard: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
@@ -397,11 +408,11 @@ public struct TFTHomescreenCanvas: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(isCallRinging ? "INCOMING CALL" : "ACTIVE CALL · \(callDuration)")
+                    Text(isCallRinging ? "INCOMING CALL" : "ONGOING CALL · \(callDuration)")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(isCallRinging ? emerald : amber)
                     
-                    Text(callerName)
+                    Text(resolvedCallTitle)
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(1)
@@ -410,14 +421,14 @@ public struct TFTHomescreenCanvas: View {
                 Spacer()
             }
             
-            Text(isCallRinging ? "Joystick ← / ↑ / ● to Answer   ·   → / ↓ to Reject" : "Joystick → / ↓ or ● Center to End Call")
+            Text(isCallRinging ? "Joystick ← / ↑ / ● to Answer   ·   → / ↓ to Reject" : "Joystick ● / ← / → / ↓ to End Call")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.85))
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
         .frame(width: 440)
-        .background(Color.white.opacity(0.10))
+        .background(Color.white.opacity(0.085))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
     
@@ -798,7 +809,7 @@ public final class TFTProjectionService: @unchecked Sendable {
             isCharging: battery.isCharging,
             isCallRinging: call.isRinging,
             isCallOngoing: call.isOngoing,
-            callerName: call.callerName,
+            callerName: call.displayTitle,
             callDuration: call.formattedDuration,
             showWeather: client.showWeatherOnTFT,
             showMusic: client.showMusicOnTFT,
@@ -993,31 +1004,38 @@ public final class TFTProjectionService: @unchecked Sendable {
             ]
             (topText as NSString).draw(in: CGRect(x: pillRect.minX, y: pillRect.minY + 5, width: pillRect.width, height: 18), withAttributes: topAttrs)
             
-            // 3. Priority 1: Incoming or Ongoing Phone Call Card (High-Visibility Full Dome Overlay!)
+            // 3. Priority 1: Incoming or Ongoing Phone Call Card (Borderless Minimal OLED Card!)
             if isCallRinging || isCallOngoing {
                 let cardRect = CGRect(x: 43, y: 72, width: 440, height: 206)
                 let accent = isCallRinging ? emerald : amber
                 
-                UIColor(white: 0.06, alpha: 0.94).setFill()
+                // Clean borderless surface (no green/amber outline border)
+                UIColor(white: 1.0, alpha: 0.085).setFill()
                 let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 24)
                 cardPath.fill()
-                accent.withAlphaComponent(0.20).setFill()
-                cardPath.fill()
-                accent.withAlphaComponent(0.85).setStroke()
-                cardPath.lineWidth = 2.2
-                cardPath.stroke()
                 
                 // Status Badge
-                let badgeText = isCallRinging ? "📞  INCOMING PHONE CALL" : "🟢  ACTIVE CALL  ·  \(callDuration)"
+                let badgeText = isCallRinging ? "INCOMING CALL" : "ONGOING CALL  ·  \(callDuration)"
                 let badgeAttrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 14, weight: .heavy),
+                    .font: UIFont.systemFont(ofSize: 13.5, weight: .heavy),
                     .foregroundColor: accent,
                     .paragraphStyle: topPara
                 ]
-                (badgeText as NSString).draw(in: CGRect(x: cardRect.minX + 16, y: cardRect.minY + 20, width: cardRect.width - 32, height: 22), withAttributes: badgeAttrs)
+                (badgeText as NSString).draw(in: CGRect(x: cardRect.minX + 16, y: cardRect.minY + 22, width: cardRect.width - 32, height: 22), withAttributes: badgeAttrs)
                 
-                // Caller Name (Large, crisp, unmistakable)
-                let displayCaller = callerName.isEmpty ? "Incoming Call" : callerName
+                // Caller Title (Never displays "Incoming Call" during an ongoing call!)
+                let trimmedCaller = callerName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayCaller: String
+                if isCallOngoing {
+                    if trimmedCaller.isEmpty || trimmedCaller == "Incoming Call" || trimmedCaller == "Outgoing Call" || trimmedCaller == "Active Call" {
+                        displayCaller = "Ongoing Call"
+                    } else {
+                        displayCaller = trimmedCaller
+                    }
+                } else {
+                    displayCaller = trimmedCaller.isEmpty ? "Incoming Call" : trimmedCaller
+                }
+                
                 let callerAttrs: [NSAttributedString.Key: Any] = [
                     .font: UIFont.systemFont(ofSize: 27, weight: .bold),
                     .foregroundColor: UIColor.white,
@@ -1025,7 +1043,7 @@ public final class TFTProjectionService: @unchecked Sendable {
                 ]
                 (displayCaller as NSString).draw(in: CGRect(x: cardRect.minX + 18, y: cardRect.minY + 54, width: cardRect.width - 36, height: 36), withAttributes: callerAttrs)
                 
-                // Handlebar Action Pills (Matches Call Screen Left=Answer, Right=Reject, Middle=End + Up/Down)
+                // Handlebar Action Pills (Left/Up/Center=Answer, Right/Down=Reject, Any direction=End Ongoing Call)
                 if isCallRinging {
                     let ansRect = CGRect(x: cardRect.minX + 26, y: cardRect.minY + 122, width: 186, height: 48)
                     emerald.setFill()
@@ -1047,7 +1065,7 @@ public final class TFTProjectionService: @unchecked Sendable {
                     ]
                     ("→ / ↓  Decline" as NSString).draw(in: CGRect(x: rejRect.minX, y: rejRect.minY + 15, width: rejRect.width, height: 20), withAttributes: rejAttrs)
                 } else {
-                    let endRect = CGRect(x: cardRect.midX - 125, y: cardRect.minY + 122, width: 250, height: 48)
+                    let endRect = CGRect(x: cardRect.midX - 130, y: cardRect.minY + 122, width: 260, height: 48)
                     coral.setFill()
                     UIBezierPath(roundedRect: endRect, cornerRadius: 24).fill()
                     let endAttrs: [NSAttributedString.Key: Any] = [
@@ -1055,7 +1073,7 @@ public final class TFTProjectionService: @unchecked Sendable {
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: topPara
                     ]
-                    ("● / → / ↓  End Call" as NSString).draw(in: CGRect(x: endRect.minX, y: endRect.minY + 15, width: endRect.width, height: 20), withAttributes: endAttrs)
+                    ("● / ← / → / ↓  End Call" as NSString).draw(in: CGRect(x: endRect.minX, y: endRect.minY + 15, width: endRect.width, height: 20), withAttributes: endAttrs)
                 }
                 return
             }

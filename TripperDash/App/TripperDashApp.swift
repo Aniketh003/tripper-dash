@@ -147,13 +147,13 @@ private struct GlobalLiveHUD: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(call.callerName)
+                        Text(call.displayTitle)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.white)
                             .lineLimit(1)
                         
                         HStack(spacing: 6) {
-                            Text(call.isRinging ? "Incoming · ←/↑/● Answer · →/↓ Drop" : call.formattedDuration)
+                            Text(call.isRinging ? "Incoming · ←/↑/● Answer · →/↓ Drop" : "Ongoing · \(call.formattedDuration)")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundColor(call.isOngoing ? AppTheme.emerald : AppTheme.textSecondary)
@@ -189,10 +189,6 @@ private struct GlobalLiveHUD: View {
                 .background(.ultraThinMaterial)
                 .background(Color.black.opacity(0.65))
                 .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(AppTheme.borderSpecular, lineWidth: 0.8)
-                )
                 .shadow(color: .black.opacity(0.6), radius: 20, y: 8)
                 .padding(.horizontal, 16)
                 .transition(.move(edge: .top).combined(with: .opacity))

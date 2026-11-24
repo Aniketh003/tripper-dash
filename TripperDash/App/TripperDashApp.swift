@@ -28,11 +28,11 @@ struct TripperDashApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack(alignment: .top) {
-                // Permanently mounted invisible system volume bridge so joystick Up/Down
-                // adjusts real iOS media volume reliably from ANY tab
+                // Permanently mounted offscreen system volume bridge (full alpha=1.0 & 200x44 size
+                // required by iOS 17/18 for MPVolumeSlider to honor programmatic volume changes)
                 SystemVolumeBridge()
-                    .frame(width: 1, height: 1)
-                    .opacity(0.01)
+                    .frame(width: 200, height: 44)
+                    .offset(x: -2000, y: -2000)
                     .allowsHitTesting(false)
                 
                 // Clean 5-Tab Apple HIG Architecture (no overflow "More" tab)
@@ -153,7 +153,7 @@ private struct GlobalLiveHUD: View {
                             .lineLimit(1)
                         
                         HStack(spacing: 6) {
-                            Text(call.isRinging ? "Incoming · ↑/● Answer · ↓ Drop" : call.formattedDuration)
+                            Text(call.isRinging ? "Incoming · ←/↑/● Answer · →/↓ Drop" : call.formattedDuration)
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundColor(call.isOngoing ? AppTheme.emerald : AppTheme.textSecondary)

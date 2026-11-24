@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import CoreLocation
 import CoreGraphics
 import CoreVideo
 import CoreMedia
@@ -409,9 +410,9 @@ public struct TFTHomescreenCanvas: View {
                 Spacer()
             }
             
-            Text(isCallRinging ? "Joystick ↑ or ● Center to Answer   ·   ↓ Down to Reject" : "Joystick ↓ Down or ● Center to End Call")
+            Text(isCallRinging ? "Joystick ← / ↑ / ● to Answer   ·   → / ↓ to Reject" : "Joystick → / ↓ or ● Center to End Call")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundColor(.white.opacity(0.85))
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
@@ -420,37 +421,160 @@ public struct TFTHomescreenCanvas: View {
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
     
-    // MARK: - Active Navigation Card (Only shown when a route is actively being navigated)
+    // MARK: - Live Moving Vector Navigation Map + Turn HUD (Shown when a route is actively being navigated)
     private func activeNavigationCard(instruction: String, distanceMeters: Int) -> some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(amber.opacity(0.20))
-                    .frame(width: 58, height: 58)
-                Image(systemName: "arrow.turn.up.right")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(amber)
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(distanceMeters >= 1000 ? String(format: "%.1f km", Double(distanceMeters) / 1000.0) : "\(distanceMeters) m")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.white)
+        let nav = NavigationEngine.shared
+        let client = TripperDashClient.shared
+        let stepIcon = nav.currentStep?.maneuver.iconName ?? "location.north.line.fill"
+        let totalRemMeters = max(distanceMeters, client.activeNavTotalDistanceMeters)
+        let totalRemStr = totalRemMeters >= 1000 ? String(format: "%.1f km", Double(totalRemMeters) / 1000.0) : "\(totalRemMeters) m"
+        let etaStr = client.activeNavEtaText.isEmpty ? nav.etaFormatted : client.activeNavEtaText
+        
+        return ZStack {
+            // 1. Live Heading-Up Vector Route Map Canvas
+            Canvas { context, size in
+                let puckCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.78)
                 
-                Text(instruction)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.82))
-                    .lineLimit(2)
+                // Subtle radar range rings around the motorcycle puck
+                for radius in [55.0, 105.0, 155.0] {
+                    let ringRect = CGRect(x: puckCenter.x - radius, y: puckCenter.y - radius, width: radius * 2, height: radius * 2)
+                    context.stroke(Path(ellipseIn: ringRect), with: .color(.white.opacity(0.06)), lineWidth: 1)
+                }
+                
+                let coords = nav.decodedCoordinates
+                if coords.count >= 2 {
+                    let anchor = nav.riderCoordinate ?? coords[min(nav.closestPolylineIndex, coords.count - 1)]
+                    let headingRad = nav.riderHeadingDegrees * .pi / 180.0
+                    let cosH = cos(headingRad)
+                    let sinH = sin(headingRad)
+                    let metersPerDegLat = 111_132.0
+                    let metersPerDegLng = 111_320.0 * max(0.2, cos(anchor.latitude * .pi / 180.0))
+                    let pxPerMeter = distanceMeters < 220 ? 0.48 : 0.24
+                    
+                    func project(_ c: CLLocationCoordinate2D) -> CGPoint {
+                        let eastM = (c.longitude - anchor.longitude) * metersPerDegLng
+                        let northM = (c.latitude - anchor.latitude) * metersPerDegLat
+                        // Rotate into Rider Heading-Up frame (forward = -Y, right = +X)
+                        let rightM = eastM * cosH - northM * sinH
+                        let fwdM = eastM * sinH + northM * cosH
+                        return CGPoint(
+                            x: puckCenter.x + CGFloat(rightM * pxPerMeter),
+                            y: puckCenter.y - CGFloat(fwdM * pxPerMeter)
+                        )
+                    }
+                    
+                    let splitIdx = min(max(0, nav.closestPolylineIndex), coords.count - 1)
+                    var upcomingPath = Path()
+                    let startPt = project(anchor)
+                    upcomingPath.move(to: startPt)
+                    let endIdx = min(coords.count - 1, splitIdx + 90)
+                    for i in splitIdx...endIdx {
+                        upcomingPath.addLine(to: project(coords[i]))
+                    }
+                    
+                    // Glowing route road casing & active path
+                    context.stroke(upcomingPath, with: .color(.black.opacity(0.85)), style: StrokeStyle(lineWidth: 13, lineCap: .round, lineJoin: .round))
+                    context.stroke(upcomingPath, with: .color(amber), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                    
+                    // Turn waypoint marker
+                    if let step = nav.currentStep, let tLat = step.endLatitude, let tLng = step.endLongitude {
+                        let turnPt = project(CLLocationCoordinate2D(latitude: tLat, longitude: tLng))
+                        let markerRect = CGRect(x: turnPt.x - 7, y: turnPt.y - 7, width: 14, height: 14)
+                        context.fill(Path(ellipseIn: markerRect), with: .color(.white))
+                        context.stroke(Path(ellipseIn: markerRect.insetBy(dx: -3, dy: -3)), with: .color(amber), lineWidth: 2.5)
+                    }
+                }
+                
+                // Rider Directional Navigation Arrow Puck at puckCenter
+                let haloRect = CGRect(x: puckCenter.x - 16, y: puckCenter.y - 16, width: 32, height: 32)
+                context.fill(Path(ellipseIn: haloRect), with: .color(emerald.opacity(0.24)))
+                var arrow = Path()
+                arrow.move(to: CGPoint(x: puckCenter.x, y: puckCenter.y - 12))
+                arrow.addLine(to: CGPoint(x: puckCenter.x + 9, y: puckCenter.y + 9))
+                arrow.addLine(to: CGPoint(x: puckCenter.x, y: puckCenter.y + 4))
+                arrow.addLine(to: CGPoint(x: puckCenter.x - 9, y: puckCenter.y + 9))
+                arrow.closeSubpath()
+                context.fill(arrow, with: .color(emerald))
+                context.stroke(arrow, with: .color(.white), lineWidth: 1.8)
             }
+            .frame(width: 468, height: 210)
+            .background(Color(red: 0.04, green: 0.07, blue: 0.12).opacity(0.85))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             
-            Spacer()
+            // 2. Top Turn-by-Turn Instruction Banner + Bottom-Right ETA Pill
+            VStack {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(amber)
+                            .frame(width: 44, height: 44)
+                        Image(systemName: stepIcon)
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.black)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text(distanceMeters >= 1000 ? String(format: "%.1f km", Double(distanceMeters) / 1000.0) : "\(distanceMeters) m")
+                                .font(.system(size: 22, weight: .heavy, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundColor(.white)
+                            
+                            // 6-Bar Proximity Indicator
+                            let prox = Int(DashK1GProtocol.proximityLevel(meters: distanceMeters))
+                            if prox > 0 {
+                                HStack(spacing: 2) {
+                                    ForEach(0..<6, id: \.self) { idx in
+                                        Capsule()
+                                            .fill(idx < prox ? amber : Color.white.opacity(0.18))
+                                            .frame(width: 5, height: 8)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Text(instruction)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.88))
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.78))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(amber.opacity(0.45), lineWidth: 1)
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                
+                Spacer()
+                
+                HStack {
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Image(systemName: "flag.checkered")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(emerald)
+                        Text(etaStr.isEmpty ? totalRemStr : "\(totalRemStr) · ETA \(etaStr)")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.82))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 10)
+                }
+            }
+            .frame(width: 468, height: 210)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
-        .frame(width: 440)
-        .background(Color.white.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 
@@ -724,6 +848,23 @@ public final class TFTProjectionService: @unchecked Sendable {
         }
     }
     
+    private static func maneuverGlyphText(for iconCode: UInt8) -> String {
+        switch iconCode {
+        case DashK1GProtocol.navManeuverTurnLeft:   return "↰"
+        case DashK1GProtocol.navManeuverTurnRight:  return "↱"
+        case DashK1GProtocol.navManeuverSharpLeft:  return "↙"
+        case DashK1GProtocol.navManeuverSharpRight: return "↘"
+        case DashK1GProtocol.navManeuverSlightLeft: return "↖"
+        case DashK1GProtocol.navManeuverSlightRight:return "↗"
+        case DashK1GProtocol.navManeuverUTurnLeft,
+             DashK1GProtocol.navManeuverUTurnRight: return "⮌"
+        case DashK1GProtocol.navManeuverRoundabout: return "⟳"
+        case DashK1GProtocol.navManeuverArrive,
+             DashK1GProtocol.navManeuverArrivalPin: return "⚑"
+        default:                                    return "↑"
+        }
+    }
+    
     /// Thread-safe 526×300 Dome Renderer using UIGraphicsImageRenderer / CoreGraphics.
     /// Runs reliably on `videoQueue` even when the app is in the background, when Spotify is open,
     /// when the phone screen is locked, or when the iOS Incoming Call screen covers the display!
@@ -831,7 +972,7 @@ public final class TFTProjectionService: @unchecked Sendable {
                 }
             }
             
-            // 2. Top Status Capsule (Clock · Compass · Battery) at y = 32..62
+            // 2. Top Status Capsule (Clock · Compass · Battery) at y = 30..60
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm"
             let timeStr = fmt.string(from: Date())
@@ -839,29 +980,31 @@ public final class TFTProjectionService: @unchecked Sendable {
             let compassStr = dirs[Int((heading + 22.5) / 45.0) & 7]
             let topText = "\(timeStr)   ·   \(compassStr)   ·   \(isCharging ? "⚡" : "")\(batteryPercent)%"
             
-            let pillRect = CGRect(x: 158, y: 30, width: 210, height: 30)
+            let pillRect = CGRect(x: 158, y: 28, width: 210, height: 28)
             UIColor(white: 1.0, alpha: 0.09).setFill()
-            UIBezierPath(roundedRect: pillRect, cornerRadius: 15).fill()
+            UIBezierPath(roundedRect: pillRect, cornerRadius: 14).fill()
             
             let topPara = NSMutableParagraphStyle()
             topPara.alignment = .center
             let topAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 13.5, weight: .bold),
+                .font: UIFont.systemFont(ofSize: 13.0, weight: .bold),
                 .foregroundColor: UIColor.white,
                 .paragraphStyle: topPara
             ]
-            (topText as NSString).draw(in: CGRect(x: pillRect.minX, y: pillRect.minY + 6, width: pillRect.width, height: 20), withAttributes: topAttrs)
+            (topText as NSString).draw(in: CGRect(x: pillRect.minX, y: pillRect.minY + 5, width: pillRect.width, height: 18), withAttributes: topAttrs)
             
             // 3. Priority 1: Incoming or Ongoing Phone Call Card (High-Visibility Full Dome Overlay!)
             if isCallRinging || isCallOngoing {
-                let cardRect = CGRect(x: 43, y: 74, width: 440, height: 204)
+                let cardRect = CGRect(x: 43, y: 72, width: 440, height: 206)
                 let accent = isCallRinging ? emerald : amber
                 
-                accent.withAlphaComponent(0.18).setFill()
+                UIColor(white: 0.06, alpha: 0.94).setFill()
                 let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 24)
                 cardPath.fill()
-                accent.withAlphaComponent(0.75).setStroke()
-                cardPath.lineWidth = 2.0
+                accent.withAlphaComponent(0.20).setFill()
+                cardPath.fill()
+                accent.withAlphaComponent(0.85).setStroke()
+                cardPath.lineWidth = 2.2
                 cardPath.stroke()
                 
                 // Status Badge
@@ -871,40 +1014,40 @@ public final class TFTProjectionService: @unchecked Sendable {
                     .foregroundColor: accent,
                     .paragraphStyle: topPara
                 ]
-                (badgeText as NSString).draw(in: CGRect(x: cardRect.minX + 16, y: cardRect.minY + 22, width: cardRect.width - 32, height: 22), withAttributes: badgeAttrs)
+                (badgeText as NSString).draw(in: CGRect(x: cardRect.minX + 16, y: cardRect.minY + 20, width: cardRect.width - 32, height: 22), withAttributes: badgeAttrs)
                 
                 // Caller Name (Large, crisp, unmistakable)
                 let displayCaller = callerName.isEmpty ? "Incoming Call" : callerName
                 let callerAttrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 28, weight: .bold),
+                    .font: UIFont.systemFont(ofSize: 27, weight: .bold),
                     .foregroundColor: UIColor.white,
                     .paragraphStyle: topPara
                 ]
-                (displayCaller as NSString).draw(in: CGRect(x: cardRect.minX + 18, y: cardRect.minY + 58, width: cardRect.width - 36, height: 38), withAttributes: callerAttrs)
+                (displayCaller as NSString).draw(in: CGRect(x: cardRect.minX + 18, y: cardRect.minY + 54, width: cardRect.width - 36, height: 36), withAttributes: callerAttrs)
                 
-                // Handlebar Action Pills
+                // Handlebar Action Pills (Matches Call Screen Left=Answer, Right=Reject, Middle=End + Up/Down)
                 if isCallRinging {
-                    let ansRect = CGRect(x: cardRect.minX + 36, y: cardRect.minY + 122, width: 174, height: 48)
+                    let ansRect = CGRect(x: cardRect.minX + 26, y: cardRect.minY + 122, width: 186, height: 48)
                     emerald.setFill()
                     UIBezierPath(roundedRect: ansRect, cornerRadius: 24).fill()
                     let btnAttrs: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                        .font: UIFont.systemFont(ofSize: 13.5, weight: .bold),
                         .foregroundColor: UIColor.black,
                         .paragraphStyle: topPara
                     ]
-                    ("↑ / ● Answer" as NSString).draw(in: CGRect(x: ansRect.minX, y: ansRect.minY + 15, width: ansRect.width, height: 20), withAttributes: btnAttrs)
+                    ("← / ↑ / ●  Answer" as NSString).draw(in: CGRect(x: ansRect.minX, y: ansRect.minY + 15, width: ansRect.width, height: 20), withAttributes: btnAttrs)
                     
-                    let rejRect = CGRect(x: cardRect.maxX - 210, y: cardRect.minY + 122, width: 174, height: 48)
+                    let rejRect = CGRect(x: cardRect.maxX - 212, y: cardRect.minY + 122, width: 186, height: 48)
                     coral.setFill()
                     UIBezierPath(roundedRect: rejRect, cornerRadius: 24).fill()
                     let rejAttrs: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                        .font: UIFont.systemFont(ofSize: 13.5, weight: .bold),
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: topPara
                     ]
-                    ("↓ Reject" as NSString).draw(in: CGRect(x: rejRect.minX, y: rejRect.minY + 15, width: rejRect.width, height: 20), withAttributes: rejAttrs)
+                    ("→ / ↓  Decline" as NSString).draw(in: CGRect(x: rejRect.minX, y: rejRect.minY + 15, width: rejRect.width, height: 20), withAttributes: rejAttrs)
                 } else {
-                    let endRect = CGRect(x: cardRect.midX - 110, y: cardRect.minY + 122, width: 220, height: 48)
+                    let endRect = CGRect(x: cardRect.midX - 125, y: cardRect.minY + 122, width: 250, height: 48)
                     coral.setFill()
                     UIBezierPath(roundedRect: endRect, cornerRadius: 24).fill()
                     let endAttrs: [NSAttributedString.Key: Any] = [
@@ -912,31 +1055,197 @@ public final class TFTProjectionService: @unchecked Sendable {
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: topPara
                     ]
-                    ("↓ / ● End Call" as NSString).draw(in: CGRect(x: endRect.minX, y: endRect.minY + 15, width: endRect.width, height: 20), withAttributes: endAttrs)
+                    ("● / → / ↓  End Call" as NSString).draw(in: CGRect(x: endRect.minX, y: endRect.minY + 15, width: endRect.width, height: 20), withAttributes: endAttrs)
                 }
                 return
             }
             
-            // 4. Priority 2: Active Navigation Turn Card (only when a route is active)
+            // 4. Priority 2: Live Moving Heading-Up Vector Navigation Map (Official-App Style!)
             if let navText = activeNavInstruction, !navText.isEmpty, let dist = activeNavDistanceMeters {
-                let navRect = CGRect(x: 43, y: 82, width: 440, height: 185)
-                UIColor(white: 1.0, alpha: 0.08).setFill()
-                UIBezierPath(roundedRect: navRect, cornerRadius: 22).fill()
+                let nav = NavigationEngine.shared
+                let mapRect = CGRect(x: 24, y: 64, width: 478, height: 224)
+                
+                cg.saveGState()
+                let mapClip = UIBezierPath(roundedRect: mapRect, cornerRadius: 22)
+                mapClip.addClip()
+                
+                // Dark tactical navigation map background
+                UIColor(red: 0.04, green: 0.07, blue: 0.12, alpha: 0.94).setFill()
+                cg.fill(mapRect)
+                
+                let puckCenter = CGPoint(x: 263, y: 236)
+                
+                // Subtle radar range rings around the motorcycle puck
+                UIColor(white: 1.0, alpha: 0.06).setStroke()
+                for r: CGFloat in [55, 105, 155] {
+                    let ring = UIBezierPath(ovalIn: CGRect(x: puckCenter.x - r, y: puckCenter.y - r, width: r * 2, height: r * 2))
+                    ring.lineWidth = 1.0
+                    ring.stroke()
+                }
+                
+                // Project route polyline in Heading-Up coordinates around the rider
+                let coords = nav.decodedCoordinates
+                if coords.count >= 2 {
+                    let splitIdx = min(max(0, nav.closestPolylineIndex), coords.count - 1)
+                    let anchor = nav.riderCoordinate ?? coords[splitIdx]
+                    let headingDeg = nav.riderHeadingDegrees > 0 ? nav.riderHeadingDegrees : heading
+                    let headingRad = headingDeg * .pi / 180.0
+                    let cosH = cos(headingRad)
+                    let sinH = sin(headingRad)
+                    let metersPerDegLat = 111_132.0
+                    let metersPerDegLng = 111_320.0 * max(0.2, cos(anchor.latitude * .pi / 180.0))
+                    let pxPerMeter = dist < 220 ? 0.50 : 0.25
+                    
+                    func project(_ c: CLLocationCoordinate2D) -> CGPoint {
+                        let eastM = (c.longitude - anchor.longitude) * metersPerDegLng
+                        let northM = (c.latitude - anchor.latitude) * metersPerDegLat
+                        let rightM = eastM * cosH - northM * sinH
+                        let fwdM = eastM * sinH + northM * cosH
+                        return CGPoint(
+                            x: puckCenter.x + CGFloat(rightM * pxPerMeter),
+                            y: puckCenter.y - CGFloat(fwdM * pxPerMeter)
+                        )
+                    }
+                    
+                    // Traveled tail behind rider
+                    if splitIdx > 0 {
+                        let tailStart = max(0, splitIdx - 25)
+                        let tailPath = UIBezierPath()
+                        tailPath.move(to: project(coords[tailStart]))
+                        for i in (tailStart + 1)...splitIdx {
+                            tailPath.addLine(to: project(coords[i]))
+                        }
+                        tailPath.addLine(to: puckCenter)
+                        tailPath.lineWidth = 6
+                        tailPath.lineCapStyle = .round
+                        tailPath.lineJoinStyle = .round
+                        UIColor(white: 1.0, alpha: 0.22).setStroke()
+                        tailPath.stroke()
+                    }
+                    
+                    // Upcoming road path ahead of rider
+                    let routePath = UIBezierPath()
+                    routePath.move(to: puckCenter)
+                    let endIdx = min(coords.count - 1, splitIdx + 95)
+                    for i in splitIdx...endIdx {
+                        routePath.addLine(to: project(coords[i]))
+                    }
+                    routePath.lineCapStyle = .round
+                    routePath.lineJoinStyle = .round
+                    
+                    // Outer dark road casing
+                    routePath.lineWidth = 14
+                    UIColor(red: 0.01, green: 0.02, blue: 0.05, alpha: 0.95).setStroke()
+                    routePath.stroke()
+                    
+                    // Inner glowing amber route line
+                    routePath.lineWidth = 8.5
+                    amber.setStroke()
+                    routePath.stroke()
+                    
+                    // Highlight upcoming turn junction waypoint
+                    if let step = nav.currentStep, let tLat = step.endLatitude, let tLng = step.endLongitude {
+                        let turnPt = project(CLLocationCoordinate2D(latitude: tLat, longitude: tLng))
+                        let outerDot = UIBezierPath(ovalIn: CGRect(x: turnPt.x - 10, y: turnPt.y - 10, width: 20, height: 20))
+                        amber.withAlphaComponent(0.35).setFill()
+                        outerDot.fill()
+                        let innerDot = UIBezierPath(ovalIn: CGRect(x: turnPt.x - 5.5, y: turnPt.y - 5.5, width: 11, height: 11))
+                        UIColor.white.setFill()
+                        innerDot.fill()
+                    }
+                }
+                
+                // Draw Rider Directional Navigation Arrow Puck at puckCenter
+                let halo = UIBezierPath(ovalIn: CGRect(x: puckCenter.x - 18, y: puckCenter.y - 18, width: 36, height: 36))
+                emerald.withAlphaComponent(0.24).setFill()
+                halo.fill()
+                
+                let arrow = UIBezierPath()
+                arrow.move(to: CGPoint(x: puckCenter.x, y: puckCenter.y - 13))
+                arrow.addLine(to: CGPoint(x: puckCenter.x + 10, y: puckCenter.y + 10))
+                arrow.addLine(to: CGPoint(x: puckCenter.x, y: puckCenter.y + 5))
+                arrow.addLine(to: CGPoint(x: puckCenter.x - 10, y: puckCenter.y + 10))
+                arrow.close()
+                emerald.setFill()
+                arrow.fill()
+                UIColor.white.setStroke()
+                arrow.lineWidth = 2.0
+                arrow.stroke()
+                
+                cg.restoreGState()
+                
+                // Top Turn Instruction Banner overlaid at top of map (y = 68..126)
+                let bannerRect = CGRect(x: 42, y: 68, width: 442, height: 58)
+                UIColor(white: 0.05, alpha: 0.90).setFill()
+                let bannerPath = UIBezierPath(roundedRect: bannerRect, cornerRadius: 16)
+                bannerPath.fill()
+                amber.withAlphaComponent(0.55).setStroke()
+                bannerPath.lineWidth = 1.2
+                bannerPath.stroke()
+                
+                // Maneuver Icon Circle
+                let iconCircleRect = CGRect(x: bannerRect.minX + 10, y: bannerRect.minY + 8, width: 42, height: 42)
+                amber.setFill()
+                UIBezierPath(ovalIn: iconCircleRect).fill()
+                
+                let glyphStr = Self.maneuverGlyphText(for: client.activeNavIconCode)
+                let glyphAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 22, weight: .heavy),
+                    .foregroundColor: UIColor.black,
+                    .paragraphStyle: topPara
+                ]
+                (glyphStr as NSString).draw(in: CGRect(x: iconCircleRect.minX, y: iconCircleRect.minY + 7, width: iconCircleRect.width, height: 28), withAttributes: glyphAttrs)
+                
+                // Distance to Next Turn + Street Name
+                let leftNavPara = NSMutableParagraphStyle()
+                leftNavPara.alignment = .left
+                leftNavPara.lineBreakMode = .byTruncatingTail
                 
                 let distStr = dist >= 1000 ? String(format: "%.1f km", Double(dist) / 1000.0) : "\(dist) m"
                 let distAttrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 34, weight: .bold),
-                    .foregroundColor: amber,
-                    .paragraphStyle: topPara
+                    .font: UIFont.systemFont(ofSize: 21, weight: .heavy),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: leftNavPara
                 ]
-                (distStr as NSString).draw(in: CGRect(x: navRect.minX + 20, y: navRect.minY + 34, width: navRect.width - 40, height: 42), withAttributes: distAttrs)
+                (distStr as NSString).draw(in: CGRect(x: bannerRect.minX + 62, y: bannerRect.minY + 6, width: 130, height: 24), withAttributes: distAttrs)
+                
+                // 6-Bar Turn Proximity Meter
+                let proxLevel = Int(DashK1GProtocol.proximityLevel(meters: dist))
+                if proxLevel > 0 {
+                    for b in 0..<6 {
+                        let barRect = CGRect(x: bannerRect.minX + 185 + CGFloat(b * 9), y: bannerRect.minY + 14, width: 6, height: 10)
+                        (b < proxLevel ? amber : UIColor(white: 1.0, alpha: 0.18)).setFill()
+                        UIBezierPath(roundedRect: barRect, cornerRadius: 2).fill()
+                    }
+                }
                 
                 let streetAttrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 18, weight: .semibold),
+                    .font: UIFont.systemFont(ofSize: 13.5, weight: .semibold),
+                    .foregroundColor: UIColor(white: 1.0, alpha: 0.88),
+                    .paragraphStyle: leftNavPara
+                ]
+                (navText as NSString).draw(in: CGRect(x: bannerRect.minX + 62, y: bannerRect.minY + 32, width: bannerRect.width - 74, height: 18), withAttributes: streetAttrs)
+                
+                // Bottom-Right Remaining Distance & Arrival ETA Pill
+                let totalRem = max(dist, client.activeNavTotalDistanceMeters)
+                let totalRemStr = totalRem >= 1000 ? String(format: "%.1f km", Double(totalRem) / 1000.0) : "\(totalRem) m"
+                let etaText = client.activeNavEtaText.isEmpty ? nav.etaFormatted : client.activeNavEtaText
+                let summaryStr = etaText.isEmpty ? "🏁 \(totalRemStr)" : "🏁 \(totalRemStr) · \(etaText)"
+                
+                let etaRect = CGRect(x: 312, y: 248, width: 162, height: 30)
+                UIColor(white: 0.05, alpha: 0.88).setFill()
+                let etaPath = UIBezierPath(roundedRect: etaRect, cornerRadius: 15)
+                etaPath.fill()
+                UIColor(white: 1.0, alpha: 0.22).setStroke()
+                etaPath.lineWidth = 1.0
+                etaPath.stroke()
+                
+                let etaAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 12.0, weight: .bold),
                     .foregroundColor: UIColor.white,
                     .paragraphStyle: topPara
                 ]
-                (navText as NSString).draw(in: CGRect(x: navRect.minX + 24, y: navRect.minY + 92, width: navRect.width - 48, height: 56), withAttributes: streetAttrs)
+                (summaryStr as NSString).draw(in: CGRect(x: etaRect.minX + 6, y: etaRect.minY + 7, width: etaRect.width - 12, height: 16), withAttributes: etaAttrs)
                 return
             }
             

@@ -9,25 +9,29 @@ public enum DashK1GProtocol {
     public static let bikeBroadcastIP         = "192.168.1.255"
 
     // K1G Control Hex Strings
-    public static let q3c_e_request_auth = "0016000200000000020100054B314720000804000101"
-    public static let q3c_d_prefix_hex   = "0095000200000000020100054B3147200008000080"
-    public static let q3c_z2_start_nav   = "0016000200000000020100054B31472000068000010B"
+    public static let q3c_e_request_auth  = "0016000200000000020100054B314720000804000101"
+    public static let q3c_d_prefix_hex    = "0095000200000000020100054B3147200008000080"
+    public static let q3c_z2_start_nav    = "0016000200000000020100054B31472000068000010B"
     public static let q3c_nav_placeholder = "0017000200000000020100054B31472000060A00020000"
-    public static let q3c_w_proj_on      = "0016000200000000020100054B314720000605000155"
-    public static let q3c_g_proj_frame   = "0016000200000000020100054B314720000556000155"
-    public static let q3c_h_proj_stop    = "0016000200000000020100054B3147200005560001AA"
-    public static let q3c_x_proj_off     = "0016000200000000020100054B3147200006050001AA"
-    public static let q3c_q_nav_ctx      = "0016000200000000020100054B31472000052E00011E"
-    public static let q3c_r_empty_lists  = "002A000600000000020100054B31472000052F0001000530000100053100010005320001000533000100"
-    public static let q3c_l2             = "0016000200000000020100054B314720000611000155"
-    public static let q3c_k2             = "0016000200000000020100054B314720000612000155"
-    public static let q3c_zoom_icons     = "0016000200000000020100054B31472000060C000130"
-    public static let buttonAckPrefix    = "0016000200000000020100054B3147200006800001"
+    public static let q3c_w_proj_on       = "0016000200000000020100054B314720000605000155"
+    public static let q3c_g_proj_frame    = "0016000200000000020100054B314720000556000155"
+    public static let q3c_h_proj_stop     = "0016000200000000020100054B3147200005560001AA"
+    public static let q3c_x_proj_off      = "0016000200000000020100054B3147200006050001AA"
+    public static let q3c_q_nav_ctx       = "0016000200000000020100054B31472000052E00011E"
+    public static let q3c_r_empty_lists   = "002A000600000000020100054B31472000052F0001000530000100053100010005320001000533000100"
+    public static let q3c_l2              = "0016000200000000020100054B314720000611000155"
+    public static let q3c_k2              = "0016000200000000020100054B314720000612000155"
+    public static let q3c_zoom_icons      = "0016000200000000020100054B31472000060C000130"
+    public static let buttonAckPrefix     = "0016000200000000020100054B3147200006800001"
 
     // Maneuver codes
-    public static let navManeuverContinue: UInt8 = 0x09
+    public static let navManeuverContinue: UInt8   = 0x09
     public static let navManeuverArrivalPin: UInt8 = 0x3C
-    public static let navManeuverHidden: UInt8 = 0xFF // Hides turn-by-turn bubble completely
+    public static let navManeuverHidden: UInt8     = 0xFF // Hides turn-by-turn bubble when idle
+
+    // Distance units
+    public static let navUnitKmTenths: UInt8 = 0x10 // value = km * 10 (e.g. 24 -> "2.4 km")
+    public static let navUnitMeters: UInt8   = 0x30 // value = plain meters (e.g. 350 -> "350 m")
 
     // MARK: - Packet Helpers
     public static func patchSequence(data: Data, seq: UInt8) -> Data {
@@ -93,7 +97,6 @@ public enum DashK1GProtocol {
     }
 
     /// 06 06 — Real-time Time-of-Day clock sync (hour, minute, second).
-    /// Replaces the old hardcoded capture time (14:51:52) so the TFT clock is always accurate.
     public static func buildTimeSyncPacket(seq: UInt8) -> Data {
         let comps = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
         let h = UInt8(comps.hour ?? 12)
@@ -108,7 +111,7 @@ public enum DashK1GProtocol {
         body.append(seq)
         body.append(contentsOf: [0x06, 0x0B, 0x00, UInt8(nameBytes.count + 1)])
         body.append(contentsOf: nameBytes)
-        body.append(0x00) // Null terminator
+        body.append(0x00)
         
         let count = UInt16(body.count)
         body[0] = UInt8(count >> 8)
@@ -145,7 +148,6 @@ public enum DashK1GProtocol {
                 list.append(patchSequence(data: raw, seq: nextSeq()))
             }
         }
-        // Final packet of burst: real phone status (no fake 62% battery or fake 25°C!)
         let hb = K1GPacket.makeHeartbeatPacket(
             batteryPct: batteryPct,
             charging: charging,
@@ -172,33 +174,89 @@ public enum DashK1GProtocol {
         return patchSequence(data: raw, seq: seq)
     }
 
-    private static func currentClockHHMM() -> [UInt8] {
+    // MARK: - Authentic Navigation Unit & Proximity Math (Matches Official RE App)
+
+    /// Encodes distance in meters into (onWireValue, unitByte):
+    /// - `< 1000 m`: plain meters (`0x30`, e.g. `450` -> `"450 m"`)
+    /// - `>= 1000 m`: tenths of a kilometer (`0x10`, e.g. `2400 m` -> `24` -> `"2.4 km"`)
+    public static func encodeDistanceAndUnit(meters: Int) -> (value: UInt16, unit: UInt8) {
+        let clamped = max(0, meters)
+        if clamped < 1000 {
+            return (UInt16(clamped), navUnitMeters)
+        } else {
+            let tenthsKm = min(65535, max(10, Int(round(Double(clamped) / 100.0))))
+            return (UInt16(tenthsKm), navUnitKmTenths)
+        }
+    }
+
+    /// Computes the proximity bar level (`05 0C`, 0..6) drawn beside the turn glyph on the TFT:
+    /// 4 up to 20 m, 3 to 40 m, 2 to 60 m, 1 to 80 m, 0 to 100 m (fills as turn approaches), 6 up to 500 m, 5 beyond.
+    public static func proximityLevel(meters: Int) -> UInt8 {
+        if meters <= 20 { return 4 }
+        if meters <= 100 { return UInt8(max(0, 3 - (meters - 21) / 20)) }
+        if meters <= 500 { return 6 }
+        return 5
+    }
+
+    /// Encodes remaining trip seconds as 6 ASCII digits (`HHMMDD`) + unit byte (`0x30` days, `0x10` hours, `0x20` mins)
+    public static func encodeRemainingTime(seconds: Int) -> (asciiBytes: [UInt8], unit: UInt8) {
+        let clamped = max(0, seconds)
+        let days = min(99, clamped / 86_400)
+        let hours = (clamped % 86_400) / 3_600
+        let minutes = max(1, (clamped % 3_600) / 60)
+        let unit: UInt8 = days > 0 ? 0x30 : (hours >= 1 ? 0x10 : 0x20)
+        let text = String(format: "%02d%02d%02d", hours, minutes, days)
+        return (Array(text.utf8), unit)
+    }
+
+    private static func formatClockHHMM(date: Date = Date()) -> [UInt8] {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.dateFormat = "HHmm"
-        let str = fmt.string(from: Date())
+        let str = fmt.string(from: date)
         let bytes = Array(str.utf8)
         return bytes.count == 4 ? bytes : [0x31, 0x32, 0x30, 0x30]
     }
 
     /// 0x007E Route Card packet:
-    /// - When `isNavigating == false` (Idle / Digital Homescreen):
-    ///   Hides the turn-by-turn navigation bubble (`05 02 = 0xFF`, `05 03 = 0xFF`), replaces mocked "0303"
-    ///   with real `HHmm` clock, and strips mocked distance (`05 05`, `05 09`, `05 46`) and mocked duration (`05 0B`, `05 55`)!
     /// - When `isNavigating == true`:
-    ///   Populates real maneuver icon, real distance, and real clock/ETA.
+    ///   Populates real maneuver glyph, real primary unit, real total distance & unit, real arrival ETA `HHmm`,
+    ///   real remaining duration `HHMMDD`, and real proximity bar (`05 0C`)!
+    /// - When `isCallActive == true` (Incoming or Ongoing Call):
+    ///   Enables the overlay ring (`maneuver = 0x3C` if not navigating) so the dash forwards call joystick presses!
+    /// - When idle (`isNavigating == false && isCallActive == false`):
+    ///   Hides the turn-by-turn bubble (`05 02 = 0xFF`) and omits distance/remaining time fields.
     public static func buildRouteCardPacket(
         title: String,
         seq: UInt8,
         projectionOn: Bool,
         isNavigating: Bool = false,
+        isCallActive: Bool = false,
         maneuver: UInt8 = navManeuverHidden,
-        totalDistanceMeters: Int = 0
+        nextTurnMeters: Int = 0,
+        totalDistanceMeters: Int = 0,
+        remainingSeconds: Int = 0,
+        nextManeuver: UInt8 = 0xFF
     ) -> Data {
         let cleanTitle = title.isEmpty ? "TripperDash" : title
         let titleBytes = latin1Bytes(cleanTitle, maxLength: 58) + [0x00]
-        let clockBytes = currentClockHHMM()
-        let activeManeuver: UInt8 = isNavigating ? maneuver : navManeuverHidden
+
+        let etaDate = (isNavigating && remainingSeconds > 0) ? Date().addingTimeInterval(TimeInterval(remainingSeconds)) : Date()
+        let clockBytes = formatClockHHMM(date: etaDate)
+
+        // Crucial: When a call is ringing/ongoing, the ring must NOT be 0xFF or the dash blocks call joystick buttons!
+        let activeManeuver: UInt8
+        if isNavigating {
+            activeManeuver = (maneuver == navManeuverHidden) ? navManeuverContinue : maneuver
+        } else if isCallActive {
+            activeManeuver = navManeuverArrivalPin
+        } else {
+            activeManeuver = navManeuverHidden
+        }
+
+        let primaryEncoded = encodeDistanceAndUnit(meters: nextTurnMeters)
+        let prox = isNavigating ? proximityLevel(meters: nextTurnMeters) : 0x04
+        let shownNextManeuver: UInt8 = (isNavigating && prox < 5) ? nextManeuver : 0xFF
 
         var tlvs: [[UInt8]] = []
 
@@ -207,37 +265,48 @@ public enum DashK1GProtocol {
         t0501.append(contentsOf: titleBytes)
         tlvs.append(t0501)
 
-        // 2. 05 02: Primary Maneuver (0xFF hides the turn-by-turn bubble when not navigating!)
+        // 2. 05 02: Primary Maneuver
         tlvs.append([0x05, 0x02, 0x00, 0x01, activeManeuver])
 
-        // 3. 05 03: Secondary Maneuver (0xFF = none)
-        tlvs.append([0x05, 0x03, 0x00, 0x01, 0xFF])
+        // 3. 05 03: Secondary Maneuver (shown when within 100m of turn, else 0xFF)
+        tlvs.append([0x05, 0x03, 0x00, 0x01, shownNextManeuver])
 
-        // 4. 05 06 & 05 07: Primary & Secondary Units (0x30 = meters)
-        tlvs.append([0x05, 0x06, 0x00, 0x01, 0x30])
+        // 4. 05 06 & 05 07: Primary & Secondary Units
+        tlvs.append([0x05, 0x06, 0x00, 0x01, isNavigating ? primaryEncoded.unit : 0x30])
         tlvs.append([0x05, 0x07, 0x00, 0x01, 0x30])
 
-        // 5. 05 08 & 05 54: Real Clock / ETA HHMM (4 ASCII digits)
+        // 5. 05 08 & 05 54: Real Clock or Real Arrival ETA HHMM (4 ASCII digits)
         tlvs.append([0x05, 0x08, 0x00, 0x04, clockBytes[0], clockBytes[1], clockBytes[2], clockBytes[3]])
         tlvs.append([0x05, 0x54, 0x00, 0x01, 0x30])
 
-        // 6. Only include Total Distance (05 09 + 05 46) when actually navigating!
+        // 6. Total Remaining Distance (05 09 + 05 46) when actively navigating
         if isNavigating && totalDistanceMeters > 0 {
-            let clamped = UInt16(min(65535, max(0, totalDistanceMeters)))
-            tlvs.append([0x05, 0x09, 0x00, 0x02, UInt8(clamped >> 8), UInt8(clamped & 0xFF)])
-            tlvs.append([0x05, 0x46, 0x00, 0x01, 0x30]) // 0x30 = meters
+            let totalEncoded = encodeDistanceAndUnit(meters: totalDistanceMeters)
+            tlvs.append([0x05, 0x09, 0x00, 0x02, UInt8(totalEncoded.value >> 8), UInt8(totalEncoded.value & 0xFF)])
+            tlvs.append([0x05, 0x46, 0x00, 0x01, totalEncoded.unit])
         }
 
         // 7. 05 0A: Decimal separator (0x55 = dot)
         tlvs.append([0x05, 0x0A, 0x00, 0x01, 0x55])
 
-        // 8. 05 0C: Proximity bar
-        tlvs.append([0x05, 0x0C, 0x00, 0x01, 0x04])
+        // 8. 05 0C: Proximity countdown bar (0..6)
+        tlvs.append([0x05, 0x0C, 0x00, 0x01, prox])
 
-        // 9. 06 05: Projection Flag (0x55 = ON, 0xAA = OFF)
+        // 9. Remaining Trip Time (05 0B + 05 55) when actively navigating
+        if isNavigating && remainingSeconds > 0 {
+            let rem = encodeRemainingTime(seconds: remainingSeconds)
+            if rem.asciiBytes.count == 6 {
+                var t050B: [UInt8] = [0x05, 0x0B, 0x00, 0x06]
+                t050B.append(contentsOf: rem.asciiBytes)
+                tlvs.append(t050B)
+                tlvs.append([0x05, 0x55, 0x00, 0x01, rem.unit])
+            }
+        }
+
+        // 10. 06 05: Projection Flag (0x55 = ON, 0xAA = OFF)
         tlvs.append([0x06, 0x05, 0x00, 0x01, projectionOn ? 0x55 : 0xAA])
 
-        // 10. 06 0D: Decimal formatting off (0xAA)
+        // 11. 06 0D: Decimal formatting off (0xAA)
         tlvs.append([0x06, 0x0D, 0x00, 0x01, 0xAA])
 
         let segCount = UInt16(tlvs.count + 1)
@@ -257,12 +326,13 @@ public enum DashK1GProtocol {
         return Data(body)
     }
 
-    /// Active Navigation Instruction Packet (only sent when `isNavigationActive == true`)
+    /// Active Navigation Instruction Packet (sent at 1 Hz when `isNavigationActive == true`, matching official RE app)
     public static func buildActiveNavPacket(
         maneuver: UInt8 = navManeuverContinue,
         nextMeters: Int,
         totalMeters: Int,
         roadName: String = "",
+        nextManeuver: UInt8 = 0xFF,
         seq: UInt8
     ) -> Data {
         var tlvs = ""
@@ -276,31 +346,40 @@ public enum DashK1GProtocol {
             segCount += 1
         }
 
-        // Primary maneuver (05 02 0001 XX)
-        tlvs += String(format: "05020001%02X", maneuver)
+        // Primary maneuver (05 02 0001 XX) — never send 0xFF while guiding
+        let safeManeuver = (maneuver == navManeuverHidden) ? navManeuverContinue : maneuver
+        tlvs += String(format: "05020001%02X", safeManeuver)
         segCount += 1
 
-        // Primary distance in meters (05 04 0002 XXXX)
-        tlvs += String(format: "05040002%04X", min(65535, max(0, nextMeters)))
+        // Secondary maneuver (05 03 0001 XX)
+        let prox = proximityLevel(meters: nextMeters)
+        let shownNext: UInt8 = (prox < 5) ? nextManeuver : 0xFF
+        tlvs += String(format: "05030001%02X", shownNext)
         segCount += 1
 
-        // Primary unit: 30 = meters (05 06 0001 30)
-        tlvs += "0506000130"
-        segCount += 1
+        // Primary distance + unit (05 04 0002 XXXX + 05 06 0001 UU)
+        let primaryEncoded = encodeDistanceAndUnit(meters: nextMeters)
+        tlvs += String(format: "05040002%04X", primaryEncoded.value)
+        tlvs += String(format: "05060001%02X", primaryEncoded.unit)
+        segCount += 2
 
+        // Total distance + unit (05 09 0002 XXXX + 05 46 0001 UU)
         if totalMeters > 0 {
-            tlvs += String(format: "05090002%04X", min(65535, max(0, totalMeters)))
-            tlvs += "0546000130"
+            let totalEncoded = encodeDistanceAndUnit(meters: totalMeters)
+            tlvs += String(format: "05090002%04X", totalEncoded.value)
+            tlvs += String(format: "05460001%02X", totalEncoded.unit)
             segCount += 2
         }
 
         // Decimal separator: 55 = dot (05 0A 0001 55)
         tlvs += "050A000155"
+        // Proximity bar: 0..6 (05 0C 0001 XX)
+        tlvs += String(format: "050C0001%02X", prox)
         // Projection flag: 55 = on (06 05 0001 55)
         tlvs += "0605000155"
         // Decimal format: AA = off (06 0D 0001 AA)
         tlvs += "060D0001AA"
-        segCount += 3
+        segCount += 4
         
         let hdr = String(format: "0000%04X00000000020100054B31472000", segCount)
         let fullHex = hdr + tlvs

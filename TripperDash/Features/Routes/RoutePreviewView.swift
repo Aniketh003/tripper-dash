@@ -111,7 +111,7 @@ public struct RoutePreviewView: View {
                                 .background(AppTheme.surfaceElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 
-                                // Live Autocomplete Suggestions as you type
+                                // Live Autocomplete Suggestions as you type (MapKit or Cellular Photon/Google)
                                 if !searchCompleter.suggestions.isEmpty && placeResults.isEmpty {
                                     VStack(spacing: 0) {
                                         ForEach(Array(searchCompleter.suggestions.enumerated()), id: \.offset) { idx, item in
@@ -148,6 +148,49 @@ public struct RoutePreviewView: View {
                                             .buttonStyle(.plain)
                                             
                                             if idx < searchCompleter.suggestions.count - 1 {
+                                                Divider().background(AppTheme.border)
+                                            }
+                                        }
+                                    }
+                                    .padding(.top, 4)
+                                } else if !searchCompleter.searchResults.isEmpty && placeResults.isEmpty {
+                                    VStack(spacing: 0) {
+                                        ForEach(Array(searchCompleter.searchResults.enumerated()), id: \.element.id) { idx, place in
+                                            Button(action: {
+                                                searchQuery = place.title
+                                                searchCompleter.searchResults = []
+                                                routeToPlace(place)
+                                            }) {
+                                                HStack(spacing: 10) {
+                                                    Image(systemName: "mappin.and.ellipse")
+                                                        .font(.system(size: 14, weight: .semibold))
+                                                        .foregroundColor(AppTheme.accent)
+                                                        .frame(width: 24)
+                                                    
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        Text(place.title)
+                                                            .font(.system(size: 14, weight: .semibold))
+                                                            .foregroundColor(AppTheme.textPrimary)
+                                                            .lineLimit(1)
+                                                        if !place.subtitle.isEmpty {
+                                                            Text(place.subtitle)
+                                                                .font(.system(size: 12))
+                                                                .foregroundColor(AppTheme.textSecondary)
+                                                                .lineLimit(1)
+                                                        }
+                                                    }
+                                                    Spacer()
+                                                    Image(systemName: "arrow.up.left")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                        .foregroundColor(AppTheme.textTertiary)
+                                                }
+                                                .padding(.vertical, 9)
+                                                .padding(.horizontal, 6)
+                                                .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain)
+                                            
+                                            if idx < searchCompleter.searchResults.count - 1 {
                                                 Divider().background(AppTheme.border)
                                             }
                                         }
@@ -374,15 +417,10 @@ public struct RoutePreviewView: View {
                                 
                                 ForEach(Array(route.steps.enumerated()), id: \.element.id) { idx, step in
                                     Button(action: {
-                                        navEngine.activeRoute = route
-                                        navEngine.currentStepIndex = idx
-                                        navEngine.liveDistanceToNextTurnMeters = Int(step.distanceMeters)
-                                        navEngine.isNavigating = true
-                                        dashClient.sendManeuver(
-                                            iconCode: step.maneuver.k1gIconCode,
-                                            distanceMeters: UInt32(step.distanceMeters),
-                                            streetName: step.streetName.isEmpty ? step.instruction : step.streetName
-                                        )
+                                        if !navEngine.isNavigating {
+                                            navEngine.startNavigation(route: route)
+                                        }
+                                        navEngine.jumpToStep(idx)
                                     }) {
                                         GlassCard(cornerRadius: 16, padding: 14) {
                                             HStack(spacing: 12) {

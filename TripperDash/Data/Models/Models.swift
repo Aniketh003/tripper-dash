@@ -286,20 +286,20 @@ public enum ManeuverType: String, Codable, Sendable {
         }
     }
     
-    /// Authentic Royal Enfield Tripper Dash K1G Maneuver Icon Byte
+    /// Authentic Royal Enfield Tripper Dash K1G Maneuver Icon Byte (Verified on K1G Firmware 11.63 / 13.10)
     public var k1gIconCode: UInt8 {
         switch self {
-        case .straight: return 0x09
-        case .turnSlightRight: return 0x03
-        case .turnRight: return 0x04
-        case .turnSharpRight: return 0x05
-        case .uTurn: return 0x06
-        case .turnSharpLeft: return 0x07
-        case .turnLeft: return 0x08
-        case .turnSlightLeft: return 0x09
-        case .roundabout: return 0x1B
-        case .destination: return 0x3C
-        case .unknown: return 0x09
+        case .straight: return 0x09        // Continue straight
+        case .turnLeft: return 0x14        // Turn left
+        case .turnRight: return 0x15       // Turn right
+        case .turnSharpLeft: return 0x16   // Sharp left
+        case .turnSharpRight: return 0x17  // Sharp right
+        case .turnSlightLeft: return 0x18  // Slight left
+        case .turnSlightRight: return 0x19 // Slight right
+        case .uTurn: return 0x1A           // U-turn
+        case .roundabout: return 0x32      // Roundabout clockwise exit 1
+        case .destination: return 0x00     // Arrive at destination
+        case .unknown: return 0x09         // Default to straight arrow
         }
     }
 }

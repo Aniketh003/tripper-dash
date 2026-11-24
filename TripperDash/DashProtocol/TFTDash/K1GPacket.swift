@@ -12,15 +12,20 @@ public enum K1GCommand: UInt8 {
     case telemetry = 0x30
 }
 
-// MARK: - Joystick Input Events from Handlebar (Map Mode + Media Mode)
+// MARK: - Joystick Input Events from Handlebar (Map Mode + Media Mode + Call Screen)
 public enum DashJoystickEvent: UInt8, Sendable {
-    case right          = 0x13 // Map Mode Right (0x13) & Media Mode Next Track (0x09)
-    case left           = 0x14 // Map Mode Left (0x14) & Media Mode Prev Track (0x0A)
-    case down           = 0x15 // Map Mode Down (0x15) & Media Mode Vol Down (0x07)
-    case up             = 0x06 // Media Mode Vol Up (0x06)
-    case centerClick    = 0x05 // Media Mode Play/Pause (0x05)
-    case mediaModeEnter = 0x18 // Map Mode Center Click (Enters Dash Media Mode)
-    case mediaModeBack  = 0x12 // Joystick Back / Up (Exits Dash Media Mode)
+    case callRejectRight = 0x01 // Call Screen Right (Reject / End Call)
+    case callAnswerLeft  = 0x02 // Call Screen Left (Answer Incoming Call)
+    case callVolumeUp    = 0x03 // Call Screen Volume Up
+    case callVolumeDown  = 0x04 // Call Screen Volume Down
+    case centerClick     = 0x05 // Media Mode Play/Pause (0x05)
+    case up              = 0x06 // Media Mode Vol Up (0x06)
+    case down            = 0x15 // Map Mode Down (0x15) & Media Mode Vol Down (0x07)
+    case right           = 0x13 // Map Mode Right (0x13) & Media Mode Next Track (0x09)
+    case left            = 0x14 // Map Mode Left (0x14) & Media Mode Prev Track (0x0A)
+    case mediaModeBack   = 0x12 // Joystick Back / Up (Exits Dash Media Mode / Map Mode Vol Up)
+    case callEndMiddle   = 0x16 // Call Screen Middle (End Active Call)
+    case mediaModeEnter  = 0x18 // Map Mode Center Click (Enters Dash Media Mode)
 }
 
 // MARK: - Authentic K1G Packet Builder (Verified on Royal Enfield TFT Firmware 11.63 / 13.10)
@@ -186,14 +191,18 @@ public struct K1GPacket {
     public static func makeManeuverPacket(
         iconCode: UInt8,
         distanceMeters: UInt32,
+        totalMeters: UInt32 = 0,
         streetName: String,
+        nextIconCode: UInt8 = 0xFF,
         seq: UInt8 = 0
     ) -> Data {
+        let total = totalMeters > 0 ? Int(totalMeters) : Int(distanceMeters)
         return DashK1GProtocol.buildActiveNavPacket(
             maneuver: iconCode,
             nextMeters: Int(distanceMeters),
-            totalMeters: Int(distanceMeters),
+            totalMeters: total,
             roadName: streetName,
+            nextManeuver: nextIconCode,
             seq: seq
         )
     }

@@ -35,8 +35,11 @@ public final class MediaPlaybackService: @unchecked Sendable {
     
     #if os(iOS)
     private let appleMusicPlayer = MPMusicPlayerController.systemMusicPlayer
+    fileprivate weak var mountedVolumeView: MPVolumeView?
     fileprivate weak var mountedSlider: UISlider?
+    private var windowFallbackVolumeView: MPVolumeView?
     private var volumeObservation: NSKeyValueObservation?
+    private var lastProgrammaticVolumeChangeAt: Date = .distantPast
     
     // Dynamic MediaRemote bridge
     private typealias MRMediaRemoteSendCommandFn = @convention(c) (UInt32, AnyObject?) -> Bool
@@ -96,6 +99,10 @@ public final class MediaPlaybackService: @unchecked Sendable {
         volumeObservation = session.observe(\.outputVolume, options: [.new]) { [weak self] _, change in
             guard let self = self, let newVol = change.newValue else { return }
             DispatchQueue.main.async {
+                // Ignore stale KVO echo while our programmatic volume change is committing
+                if Date().timeIntervalSince(self.lastProgrammaticVolumeChangeAt) < 0.45 {
+                    return
+                }
                 self.currentVolume = newVol
                 self.volumePercent = Int(round(newVol * 100))
                 self.notifyDashMusicAndFrame()
@@ -148,8 +155,83 @@ public final class MediaPlaybackService: @unchecked Sendable {
         self.pollTimer = timer
     }
     
-    fileprivate func attachSlider(_ slider: UISlider) {
-        self.mountedSlider = slider
+    fileprivate func attachVolumeView(_ volumeView: MPVolumeView) {
+        self.mountedVolumeView = volumeView
+        if let slider = Self.findSlider(in: volumeView) {
+            self.mountedSlider = slider
+        }
+    }
+    
+    fileprivate static func findSlider(in view: UIView) -> UISlider? {
+        if let s = view as? UISlider { return s }
+        for sub in view.subviews {
+            if let s = findSlider(in: sub) { return s }
+        }
+        return nil
+    }
+    
+    /// Lazily resolves or constructs an active `MPVolumeSlider` inside an off-screen `MPVolumeView`
+    /// with `alpha = 1.0` so iOS 16/17/18 never drops programmatic volume changes.
+    private func resolveVolumeSlider() -> UISlider? {
+        if let existing = mountedSlider, existing.window != nil {
+            return existing
+        }
+        if let vv = mountedVolumeView {
+            vv.setNeedsLayout()
+            vv.layoutIfNeeded()
+            if let s = Self.findSlider(in: vv) {
+                self.mountedSlider = s
+                return s
+            }
+        }
+        // Fallback: mount a dedicated off-screen MPVolumeView directly on the active key window
+        if windowFallbackVolumeView == nil {
+            let vv = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 240, height: 44))
+            vv.alpha = 1.0
+            vv.isHidden = false
+            vv.isUserInteractionEnabled = false
+            if let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first,
+               let window = windowScene.windows.first {
+                window.addSubview(vv)
+                vv.setNeedsLayout()
+                vv.layoutIfNeeded()
+                self.windowFallbackVolumeView = vv
+            }
+        }
+        if let fallbackVV = windowFallbackVolumeView {
+            fallbackVV.setNeedsLayout()
+            fallbackVV.layoutIfNeeded()
+            if let s = Self.findSlider(in: fallbackVV) {
+                self.mountedSlider = s
+                return s
+            }
+        }
+        return mountedSlider
+    }
+    
+    /// Dynamic private framework fallback (`AVSystemController` in `Celestial.framework` / `MediaExperience.framework`)
+    /// so handlebar volume control also works while the iPhone screen is locked or app is backgrounded.
+    private func setVolumeViaAVSystemController(_ target: Float) {
+        _ = dlopen("/System/Library/PrivateFrameworks/Celestial.framework/Celestial", RTLD_NOW)
+        _ = dlopen("/System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience", RTLD_NOW)
+        guard let cls = NSClassFromString("AVSystemController") as? NSObject.Type else { return }
+        let sharedSel = NSSelectorFromString("sharedAVSystemController")
+        guard cls.responds(to: sharedSel),
+              let controller = cls.perform(sharedSel)?.takeUnretainedValue() as? NSObject else {
+            return
+        }
+        let setVolSel = NSSelectorFromString("setVolumeTo:forCategory:")
+        guard controller.responds(to: setVolSel) else { return }
+        typealias SetVolIMP = @convention(c) (AnyObject, Selector, Float, NSString) -> Bool
+        let imp = controller.method(for: setVolSel)
+        let fn = unsafeBitCast(imp, to: SetVolIMP.self)
+        for category in ["Audio/Video", "MediaPlayback", "AmbientSound", "Ringtone"] {
+            if fn(controller, setVolSel, target, category as NSString) {
+                break
+            }
+        }
     }
     #endif
     
@@ -413,7 +495,10 @@ public final class MediaPlaybackService: @unchecked Sendable {
             #if os(iOS)
             let session = AVAudioSession.sharedInstance()
             try? session.setActive(true)
-            let base = session.outputVolume
+            // Use self.currentVolume when stepping consecutively within 1.5s because
+            // AVAudioSession.outputVolume updates asynchronously after MPVolumeSlider commits.
+            let recentlyStepped = Date().timeIntervalSince(self.lastProgrammaticVolumeChangeAt) < 1.5
+            let base = recentlyStepped ? self.currentVolume : session.outputVolume
             #else
             let base = self.currentVolume
             #endif
@@ -424,16 +509,24 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
     
     private func applySystemVolume(_ target: Float) {
+        #if os(iOS)
+        self.lastProgrammaticVolumeChangeAt = Date()
+        #endif
         self.currentVolume = target
         self.volumePercent = Int(round(target * 100))
         
         #if os(iOS)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if let slider = self.mountedSlider {
+        if let slider = self.resolveVolumeSlider() {
+            slider.value = target
             slider.setValue(target, animated: false)
-            slider.sendActions(for: .touchUpInside)
-            slider.sendActions(for: .valueChanged)
+            slider.sendActions(for: [.valueChanged, .touchUpInside])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.035) {
+                slider.setValue(target, animated: false)
+                slider.sendActions(for: .valueChanged)
+            }
         }
+        self.setVolumeViaAVSystemController(target)
         #endif
         
         triggerVolumeHUD()
@@ -456,38 +549,33 @@ public final class MediaPlaybackService: @unchecked Sendable {
     }
 }
 
-// MARK: - Persistent Invisible MPVolumeView Host (Mounted in Root View)
+// MARK: - Persistent Off-Screen MPVolumeView Host (Mounted in Root View with alpha=1.0)
 #if os(iOS)
 public struct SystemVolumeBridge: UIViewRepresentable {
     public init() {}
     
     public func makeUIView(context: Context) -> MPVolumeView {
-        let volumeView = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 120, height: 32))
-        volumeView.alpha = 0.01
+        let volumeView = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 200, height: 44))
+        // Crucial for iOS 16/17/18: alpha MUST be >= 0.05 (1.0 offscreen is best)
+        // or MPVolumeSlider silently ignores programmatic setValue calls!
+        volumeView.alpha = 1.0
+        volumeView.isHidden = false
         volumeView.isUserInteractionEnabled = false
-        volumeView.clipsToBounds = true
+        volumeView.showsRouteButton = false
+        volumeView.setNeedsLayout()
+        volumeView.layoutIfNeeded()
         
-        DispatchQueue.main.async {
-            if let slider = findSlider(in: volumeView) {
-                MediaPlaybackService.shared.attachSlider(slider)
-            }
+        MediaPlaybackService.shared.attachVolumeView(volumeView)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            volumeView.setNeedsLayout()
+            volumeView.layoutIfNeeded()
+            MediaPlaybackService.shared.attachVolumeView(volumeView)
         }
         return volumeView
     }
     
     public func updateUIView(_ uiView: MPVolumeView, context: Context) {
-        if MediaPlaybackService.shared.mountedSlider == nil,
-           let slider = findSlider(in: uiView) {
-            MediaPlaybackService.shared.attachSlider(slider)
-        }
-    }
-    
-    private func findSlider(in view: UIView) -> UISlider? {
-        if let s = view as? UISlider { return s }
-        for sub in view.subviews {
-            if let s = findSlider(in: sub) { return s }
-        }
-        return nil
+        MediaPlaybackService.shared.attachVolumeView(uiView)
     }
 }
 #else

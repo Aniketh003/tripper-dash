@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Darwin
 #if os(iOS)
 import CallKit
 import AVFoundation
@@ -23,6 +24,10 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
     private let callController = CXCallController()
     private var activeCallUUID: UUID?
     private var callMonitorTimer: DispatchSourceTimer?
+    
+    // Dynamic MediaRemote & TelephonyUtilities bridges
+    private typealias MRMediaRemoteSendCommandFn = @convention(c) (UInt32, AnyObject?) -> Bool
+    private var mrSendCommand: MRMediaRemoteSendCommandFn?
     #endif
     private var callDurationTimer: DispatchSourceTimer?
     private let timerQueue = DispatchQueue(label: "com.tripperdash.calltimer", qos: .userInteractive)
@@ -30,6 +35,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
     private override init() {
         super.init()
         #if os(iOS)
+        setupDynamicTelephonyBridges()
         callObserver.setDelegate(self, queue: .main)
         detectConnectedAudioDevice()
         startBackgroundCallMonitor()
@@ -43,11 +49,109 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
     }
     
     #if os(iOS)
-    /// Polls `CXCallObserver.calls` on a background-safe GCD timer every 0.5s so incoming/ongoing
-    /// carrier calls are detected immediately even when iOS puts the app in background during ringtone!
+    private func setupDynamicTelephonyBridges() {
+        _ = dlopen("/System/Library/PrivateFrameworks/TelephonyUtilities.framework/TelephonyUtilities", RTLD_NOW)
+        if let mrHandle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW),
+           let sym = dlsym(mrHandle, "MRMediaRemoteSendCommand") {
+            mrSendCommand = unsafeBitCast(sym, to: MRMediaRemoteSendCommandFn.self)
+        }
+    }
+    
+    /// Queries `TUCallCenter.sharedInstance()` dynamically if accessible to read caller ID or active `TUCall` objects.
+    private func activeTUCalls() -> (center: NSObject, calls: [NSObject])? {
+        guard let cls = NSClassFromString("TUCallCenter") as? NSObject.Type else { return nil }
+        let sharedSel = NSSelectorFromString("sharedInstance")
+        guard cls.responds(to: sharedSel),
+              let center = cls.perform(sharedSel)?.takeUnretainedValue() as? NSObject else {
+            return nil
+        }
+        for prop in ["currentCalls", "currentAudioAndVideoCalls"] {
+            let sel = NSSelectorFromString(prop)
+            if center.responds(to: sel),
+               let arr = center.perform(sel)?.takeUnretainedValue() as? [NSObject],
+               !arr.isEmpty {
+                return (center, arr)
+            }
+        }
+        for singleProp in ["incomingCall", "frontmostCall", "frontmostAudioOrVideoCall"] {
+            let sel = NSSelectorFromString(singleProp)
+            if center.responds(to: sel),
+               let callObj = center.perform(sel)?.takeUnretainedValue() as? NSObject {
+                return (center, [callObj])
+            }
+        }
+        return (center, [])
+    }
+    
+    private func resolveCallerNameFromTUCalls(defaultName: String) -> String {
+        guard let (_, calls) = activeTUCalls(), let first = calls.first else {
+            return defaultName
+        }
+        for key in ["displayName", "callerNameFromNetwork", "suggestedDisplayName", "contactIdentifier"] {
+            let sel = NSSelectorFromString(key)
+            if first.responds(to: sel),
+               let str = first.perform(sel)?.takeUnretainedValue() as? String,
+               !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return str
+            }
+        }
+        let handleSel = NSSelectorFromString("handle")
+        if first.responds(to: handleSel),
+           let handleObj = first.perform(handleSel)?.takeUnretainedValue() as? NSObject {
+            let valSel = NSSelectorFromString("value")
+            if handleObj.responds(to: valSel),
+               let val = handleObj.perform(valSel)?.takeUnretainedValue() as? String,
+               !val.isEmpty {
+                return val
+            }
+        }
+        return defaultName
+    }
+    
+    /// Attempt to answer via `TUCallCenter` (`answerCall:`) if available on device.
+    @discardableResult
+    private func answerViaTelephonyUtilities() -> Bool {
+        guard let (center, calls) = activeTUCalls(), let callObj = calls.first else { return false }
+        let answerSel = NSSelectorFromString("answerCall:")
+        if center.responds(to: answerSel) {
+            _ = center.perform(answerSel, with: callObj)
+            return true
+        }
+        let answerWithReqSel = NSSelectorFromString("answerWithRequest:")
+        if center.responds(to: answerWithReqSel),
+           let reqCls = NSClassFromString("TUAnswerRequest") as? NSObject.Type {
+            let initSel = NSSelectorFromString("initWithCall:")
+            let allocObj = reqCls.perform(NSSelectorFromString("alloc"))?.takeUnretainedValue() as? NSObject
+            if let req = allocObj?.perform(initSel, with: callObj)?.takeUnretainedValue() {
+                _ = center.perform(answerWithReqSel, with: req)
+                return true
+            }
+        }
+        return false
+    }
+    
+    /// Attempt to disconnect/reject via `TUCallCenter` (`disconnectCall:` / `disconnectAllCalls`) if available.
+    @discardableResult
+    private func disconnectViaTelephonyUtilities() -> Bool {
+        guard let (center, calls) = activeTUCalls() else { return false }
+        let discSel = NSSelectorFromString("disconnectCall:")
+        if let callObj = calls.first, center.responds(to: discSel) {
+            _ = center.perform(discSel, with: callObj)
+            return true
+        }
+        let discAllSel = NSSelectorFromString("disconnectAllCalls")
+        if center.responds(to: discAllSel) {
+            _ = center.perform(discAllSel)
+            return true
+        }
+        return false
+    }
+    
+    /// Polls `CXCallObserver.calls` on a background-safe GCD timer every 0.3s so incoming/ongoing
+    /// carrier & VoIP calls are detected immediately even when iOS puts the app in background during ringtone!
     private func startBackgroundCallMonitor() {
         let timer = DispatchSource.makeTimerSource(queue: timerQueue)
-        timer.schedule(deadline: .now() + 0.5, repeating: .milliseconds(500))
+        timer.schedule(deadline: .now() + 0.3, repeating: .milliseconds(300))
         timer.setEventHandler { [weak self] in
             guard let self = self, !self.isSimulatedCall else { return }
             let calls = self.callObserver.calls
@@ -66,6 +170,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                         isOngoing: false,
                         durationSeconds: 0
                     )
+                    TFTProjectionService.shared.triggerImmediateFrame()
                 }
             }
         }
@@ -92,68 +197,83 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                         isOngoing: false,
                         durationSeconds: 0
                     )
+                    TFTProjectionService.shared.triggerImmediateFrame()
                 }
             } else if call.hasConnected {
                 if !self.isOngoing || self.isRinging {
                     self.isRinging = false
                     self.isOngoing = true
-                    if self.callerName.isEmpty || self.callerName == "Incoming Call" || self.callerName == "Dialing..." {
-                        self.callerName = "Active Call"
-                    }
+                    let defaultLabel = (self.callerName.isEmpty || self.callerName == "Incoming Call" || self.callerName == "Dialing...") ? "Active Call" : self.callerName
+                    self.callerName = self.resolveCallerNameFromTUCalls(defaultName: defaultLabel)
                     self.startCallTimer()
                     self.detectConnectedAudioDevice()
-                    TripperDashClient.shared.log("📞 Phone Call Connected")
+                    TripperDashClient.shared.log("📞 Phone Call Connected (\(self.callerName))")
                     TripperDashClient.shared.sendCallAlert(
                         callerName: self.callerName,
                         isRinging: false,
                         isOngoing: true,
                         durationSeconds: self.callDurationSeconds
                     )
+                    TFTProjectionService.shared.triggerImmediateFrame()
                 }
             } else {
                 // Ringing (Incoming or Outgoing Dialing)
-                if !self.isRinging {
+                let fallbackLabel = call.isOutgoing ? "Outgoing Call" : "Incoming Call"
+                let resolvedName = self.resolveCallerNameFromTUCalls(defaultName: fallbackLabel)
+                if !self.isRinging || self.callerName != resolvedName {
+                    let wasAlreadyRinging = self.isRinging
                     self.isRinging = true
                     self.isOngoing = false
-                    self.callerName = call.isOutgoing ? "Outgoing Call" : "Incoming Call"
+                    self.callerName = resolvedName
                     self.detectConnectedAudioDevice()
-                    TripperDashClient.shared.log("📞 \(self.callerName) detected — projecting to TFT Dash!")
+                    if !wasAlreadyRinging {
+                        self.startCallTimer()
+                        TripperDashClient.shared.log("📞 \(self.callerName) ringing — projecting Call Popup to TFT Dash!")
+                    }
                     TripperDashClient.shared.sendCallAlert(
                         callerName: self.callerName,
                         isRinging: true,
                         isOngoing: false,
                         durationSeconds: 0
                     )
+                    TFTProjectionService.shared.triggerImmediateFrame()
                 }
             }
         }
     }
     #endif
     
+    /// Runs a 1Hz timer while EITHER `isRinging` OR `isOngoing` is true so the TFT Dash
+    /// continuously receives call alert cards (`05 21`, `05 4D`, `05 22`) and updates call duration.
     private func startCallTimer() {
-        stopCallTimer()
+        stopCallTimer(resetDuration: false)
         let timer = DispatchSource.makeTimerSource(queue: timerQueue)
         timer.schedule(deadline: .now() + 1.0, repeating: .seconds(1))
         timer.setEventHandler { [weak self] in
-            guard let self = self, self.isOngoing else { return }
+            guard let self = self, (self.isRinging || self.isOngoing) else { return }
             DispatchQueue.main.async {
-                self.callDurationSeconds += 1
+                if self.isOngoing {
+                    self.callDurationSeconds += 1
+                }
                 TripperDashClient.shared.sendCallAlert(
                     callerName: self.callerName,
-                    isRinging: false,
-                    isOngoing: true,
+                    isRinging: self.isRinging,
+                    isOngoing: self.isOngoing,
                     durationSeconds: self.callDurationSeconds
                 )
+                TFTProjectionService.shared.triggerImmediateFrame()
             }
         }
         timer.resume()
         self.callDurationTimer = timer
     }
     
-    private func stopCallTimer() {
+    private func stopCallTimer(resetDuration: Bool = true) {
         callDurationTimer?.cancel()
         callDurationTimer = nil
-        callDurationSeconds = 0
+        if resetDuration {
+            callDurationSeconds = 0
+        }
     }
     
     // MARK: - Handlebar & In-App Call Actions
@@ -165,16 +285,23 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
             
             #if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            if let uuid = self.activeCallUUID, !self.isSimulatedCall {
-                let answerAction = CXAnswerCallAction(call: uuid)
-                let transaction = CXTransaction(action: answerAction)
-                self.callController.request(transaction) { error in
-                    if let error = error {
-                        DispatchQueue.main.async {
-                            self.statusNote = "Carrier calls answer via Bluetooth headset/intercom"
-                            TripperDashClient.shared.log("ℹ️ iOS CallKit note: \(error.localizedDescription)")
+            if !self.isSimulatedCall {
+                let answeredViaTU = self.answerViaTelephonyUtilities()
+                if let uuid = self.activeCallUUID {
+                    let answerAction = CXAnswerCallAction(call: uuid)
+                    let transaction = CXTransaction(action: answerAction)
+                    self.callController.request(transaction) { [weak self] error in
+                        if let error = error, !answeredViaTU {
+                            // Fallback: send headset hook / toggle command via MediaRemote
+                            _ = self?.mrSendCommand?(2, nil)
+                            DispatchQueue.main.async {
+                                self?.statusNote = "Call answered via headset bridge"
+                                TripperDashClient.shared.log("ℹ️ CallKit answer fallback (\(error.localizedDescription)) — triggered headset hook")
+                            }
                         }
                     }
+                } else if !answeredViaTU {
+                    _ = self.mrSendCommand?(2, nil)
                 }
             }
             #endif
@@ -183,6 +310,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 self.isRinging = false
                 self.isOngoing = true
             }
+            self.callDurationSeconds = 0
             self.detectConnectedAudioDevice()
             self.startCallTimer()
             
@@ -193,6 +321,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 isOngoing: true,
                 durationSeconds: 0
             )
+            TFTProjectionService.shared.triggerImmediateFrame()
         }
     }
     
@@ -205,16 +334,23 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
             
             #if os(iOS)
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            if let uuid = self.activeCallUUID, !self.isSimulatedCall {
-                let endAction = CXEndCallAction(call: uuid)
-                let transaction = CXTransaction(action: endAction)
-                self.callController.request(transaction) { error in
-                    if let error = error {
-                        DispatchQueue.main.async {
-                            self.statusNote = "Carrier calls decline via Bluetooth headset/intercom"
-                            TripperDashClient.shared.log("ℹ️ iOS CallKit note: \(error.localizedDescription)")
+            if !self.isSimulatedCall {
+                let endedViaTU = self.disconnectViaTelephonyUtilities()
+                if let uuid = self.activeCallUUID {
+                    let endAction = CXEndCallAction(call: uuid)
+                    let transaction = CXTransaction(action: endAction)
+                    self.callController.request(transaction) { [weak self] error in
+                        if let error = error, !endedViaTU {
+                            // Fallback: send stop/headset hangup command via MediaRemote
+                            _ = self?.mrSendCommand?(1, nil)
+                            DispatchQueue.main.async {
+                                self?.statusNote = "Call ended via headset bridge"
+                                TripperDashClient.shared.log("ℹ️ CallKit end fallback (\(error.localizedDescription)) — triggered headset hangup")
+                            }
                         }
                     }
+                } else if !endedViaTU {
+                    _ = self.mrSendCommand?(1, nil)
                 }
             }
             #endif
@@ -234,6 +370,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 isOngoing: false,
                 durationSeconds: 0
             )
+            TFTProjectionService.shared.triggerImmediateFrame()
         }
     }
     
@@ -255,6 +392,7 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 self.isRinging = true
                 self.isOngoing = false
             }
+            self.startCallTimer()
             
             TripperDashClient.shared.sendCallAlert(
                 callerName: caller,
@@ -262,7 +400,8 @@ public final class CallHandlingService: NSObject, @unchecked Sendable {
                 isOngoing: false,
                 durationSeconds: 0
             )
-            TripperDashClient.shared.log("📞 Incoming call: '\(caller)' — Press Center/Up to Answer, Down to Decline")
+            TFTProjectionService.shared.triggerImmediateFrame()
+            TripperDashClient.shared.log("📞 Incoming call: '\(caller)' — Press Left/Up/Center to Answer, Right/Down to Decline")
         }
     }
     
